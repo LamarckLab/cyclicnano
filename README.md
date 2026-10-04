@@ -170,6 +170,26 @@ symmetry order, chain RMSD, helix fraction and clash count are all known in adva
 It needs no GPU, no model weights and no external tools, and it covers the stage 01
 and stage 04 logic end to end by synthesising the outputs of the GPU stages.
 
+## What the numbers rest on
+
+The two filters are not equally well founded, and it is worth knowing which is which.
+
+**Stage 01, shape.** Four thresholds derived from 28 hand-labelled backbones, each
+rejection accompanied by a stated reason, then confirmed on designs that were not in
+the labelled set. `configs/presets/axis_aligned.yaml` records the margin on each
+threshold; two of them sit directly on the data and would likely move given more
+labels.
+
+**Stage 04, self-consistency.** `rmsd_cutoff: 1.0`, `plddt_cutoff: 80`,
+`success_rate >= 0.3` and `best_rmsd <= 1.0` are **not calibrated against anything**.
+They are reasonable and deliberately strict, since the literature usually calls a
+design self-consistent at 2.0 angstrom, but no measurement or experimental outcome
+sets them. Treat them as a starting point.
+
+**Only the monomer is validated.** AlphaFold2 folds a single chain, so a passing
+design is one whose sequence encodes the designed subunit fold. Nothing here tests
+that copies of it assemble into the ring; that question is left to experiment.
+
 ## Status
 
 Implemented and tested: stages 00-04, the filter engine, the run manifest, and the

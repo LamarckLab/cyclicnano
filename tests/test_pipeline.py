@@ -582,3 +582,22 @@ def test_headless_backend_applies_to_every_tool():
     from cyclicnano.runner import Runner
     for tool in ("rfdiffusion", "proteinmpnn", "colabfold"):
         assert Runner(kind="local").env_vars(tool)["MPLBACKEND"] == "Agg"
+
+
+def test_rfdiffusion_is_seeded_so_a_run_can_be_repeated():
+    """Unseeded, the same command returns a different hundred backbones every time."""
+    assert "inference.deterministic=True" in build_command(_rfd_cfg(), Path("/run/b"), 10)
+
+
+def test_deterministic_seeding_can_be_turned_off():
+    cfg = _rfd_cfg("generate.deterministic=false")
+    assert "inference.deterministic=True" not in build_command(cfg, Path("/run/b"), 10)
+
+
+def test_each_batch_gets_a_distinct_seed_range():
+    """Seeding is per design index, so batches must not restart it or they repeat."""
+    first = build_command(_rfd_cfg(), Path("/run/design"), 10, start=0)
+    second = build_command(_rfd_cfg(), Path("/run/design"), 10, start=10)
+    assert "inference.design_startnum=0" in first
+    assert "inference.design_startnum=10" in second
+    assert all("inference.deterministic=True" in c for c in (first, second))

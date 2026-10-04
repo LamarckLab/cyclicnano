@@ -30,9 +30,15 @@ generate:
   hydra_run_dir: null         # default: <outdir>/logs/hydra
   output_prefix: design       # files come out as design_0.pdb .. design_N-1.pdb
   # Normally left null: the stage counts what is on disk and tells RFdiffusion where
-  # to continue, so batches number consecutively and the files end up zero-padded
-  # (design_00.pdb .. design_49.pdb). Set an integer only to pin the start index.
+  # to continue, so batches number consecutively. Set an integer to pin the start
+  # index, which with deterministic seeding also selects WHICH designs you get:
+  # raise it past n_backbones to draw a fresh, non-overlapping set.
   design_startnum: null
+  # RFdiffusion seeds each design from its index when this is on, so a run is
+  # reproducible from its config alone. Off, it seeds from entropy and the same
+  # command yields different structures every time. Note that run.seed does not
+  # reach stage 00; design_startnum is what shifts the draw.
+  deterministic: true
   # Trajectory files dominate the output and nothing reads them: 50 C5 backbones
   # wrote 337 MB of them against 4 MB of structures.
   write_trajectory: false

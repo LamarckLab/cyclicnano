@@ -66,6 +66,13 @@ def build_command(cfg: Config, out_prefix: Path, n_designs: int,
     if not cfg.get("generate.write_trajectory", False):
         argv += ["inference.write_trajectory=False"]
 
+    # Without this RFdiffusion seeds itself from entropy and the same command gives a
+    # different hundred backbones every time. It seeds per design from the design
+    # index, which the batch loop already advances, so every design in a run gets a
+    # distinct seed and two runs of the same config produce the same structures.
+    if cfg.get("generate.deterministic", True):
+        argv += ["inference.deterministic=True"]
+
     # Batches share one prefix and continue each other's numbering, so the stage ends
     # with design_0 .. design_N-1 rather than a restart inside every batch. The start
     # index is counted by the stage rather than left to RFdiffusion's -1 autodetect,
