@@ -114,6 +114,8 @@ def test_metric_set_is_complete():
         "n_clash_intra", "n_clash_inter", "min_interchain_dist", "sym_order_ok",
         "n_helices", "asphericity", "acylindricity", "shape_anisotropy", "axis_ratio",
         "assembly_asphericity", "assembly_shape_anisotropy", "assembly_axis_ratio",
+        "max_axis_angle", "mean_axis_angle", "max_inter_helix_angle",
+        "max_helix_len", "max_strand_len",
     }
     assert required <= set(m), f"missing: {sorted(required - set(m))}"
 
@@ -157,3 +159,44 @@ def test_assembly_shape_is_measured_separately_from_the_subunit():
     m = backbone_metrics(cyclic_oligomer(n_sym=5), expected_sym=5)
     assert m["assembly_shape_anisotropy"] != m["shape_anisotropy"]
     assert 0.0 <= m["assembly_shape_anisotropy"] <= 1.0
+
+
+# ------------------------------------------------------------------ axis alignment
+def test_axis_angle_is_zero_for_helices_built_along_the_axis():
+    """The synthetic bundle runs its helices parallel to z, which is the Cn axis."""
+    from cyclicnano.geometry import axis_alignment, secondary_structure, symmetry_frame
+    struct = cyclic_oligomer(n_sym=5)
+    ca = struct.chains["A"].ca
+    a = axis_alignment(ca, secondary_structure(ca), symmetry_frame(struct)["axis"])
+    assert a["max_axis_angle"] < 10            # built parallel, so near zero
+    assert a["max_inter_helix_angle"] < 10     # and parallel to each other
+
+
+def test_axis_angle_is_ninety_for_a_helix_across_the_axis():
+    """A helix perpendicular to the symmetry axis is the failure case the rule targets."""
+    import numpy as np
+    from cyclicnano.geometry import axis_alignment
+    from synthetic import ideal_helix
+    ca = ideal_helix(20)                        # runs along z
+    ss = "H" * 20
+    across = axis_alignment(ca, ss, np.array([1.0, 0.0, 0.0]))
+    assert across["max_axis_angle"] > 80
+    along = axis_alignment(ca, ss, np.array([0.0, 0.0, 1.0]))
+    assert along["max_axis_angle"] < 10
+
+
+def test_axis_angle_ignores_helix_direction():
+    """Up the axis and down it are equally well aligned, so angles fold into 0-90."""
+    import numpy as np
+    from cyclicnano.geometry import axis_alignment
+    from synthetic import ideal_helix
+    ca, ss = ideal_helix(20), "H" * 20
+    up = axis_alignment(ca, ss, np.array([0.0, 0.0, 1.0]))["max_axis_angle"]
+    down = axis_alignment(ca, ss, np.array([0.0, 0.0, -1.0]))["max_axis_angle"]
+    assert abs(up - down) < 1e-6
+
+
+def test_segment_lengths_are_reported():
+    from cyclicnano.geometry import sse_segments
+    segs = sse_segments("LLHHHHHHHHLLEEEEEELLHHH")   # 8-helix, 6-strand, 3-helix below min_len
+    assert [(c, b - a) for c, a, b in segs] == [("H", 8), ("E", 6)]

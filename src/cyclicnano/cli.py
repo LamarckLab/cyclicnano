@@ -33,6 +33,8 @@ _SAMPLE_METRICS = {
     "height": 30.0, "sym_angle_deg": 72.0, "sym_order_detected": 5.0, "sym_rmsd": 0.1,
     "n_clash_intra": 0, "n_clash_inter": 0, "n_clash": 0, "sym_order_ok": True,
     "min_interchain_dist": 3.0,
+    "max_axis_angle": 25.0, "mean_axis_angle": 15.0,
+    "max_inter_helix_angle": 20.0, "max_helix_len": 18, "max_strand_len": 6,
     "success_rate": 0.5, "best_rmsd": 0.8, "median_rmsd": 1.2, "n_seqs": 10,
     "n_seqs_folded": 10, "best_plddt": 90.0,
 }

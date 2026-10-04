@@ -132,6 +132,65 @@ def _runs(ss: str, code: str) -> list[int]:
     return lengths
 
 
+def sse_segments(ss: str, min_len: int = 4) -> list[tuple[str, int, int]]:
+    """Contiguous helix and strand runs as (code, start, stop), loops excluded."""
+    out, i = [], 0
+    while i < len(ss):
+        j = i
+        while j < len(ss) and ss[j] == ss[i]:
+            j += 1
+        if ss[i] in "HE" and j - i >= min_len:
+            out.append((ss[i], i, j))
+        i = j
+    return out
+
+
+def _principal_axis(points: np.ndarray) -> np.ndarray:
+    """Direction of greatest extent, i.e. the long axis of a helix or strand."""
+    centred = points - points.mean(0)
+    _, _, vt = np.linalg.svd(centred)
+    return vt[0]
+
+
+def axis_alignment(ca: np.ndarray, ss: str, sym_axis: np.ndarray) -> dict:
+    """How closely each secondary structure element runs along the symmetry axis.
+
+    This is the criterion that decides whether a subunit can form a stable
+    interface. A helix lying parallel to the axis extends along it and can pack
+    against the matching helix of the neighbouring subunit; one that is splayed
+    meets its neighbour at a point instead of along a line, and the assembly has
+    nothing to hold it together.
+
+    Angles are unsigned and folded into 0-90 degrees, since a helix pointing up
+    the axis and one pointing down are equally well aligned.
+    """
+    segments = sse_segments(ss)
+    if not segments:
+        return {"max_axis_angle": float("nan"), "mean_axis_angle": float("nan"),
+                "max_inter_helix_angle": float("nan"),
+                "max_helix_len": 0, "max_strand_len": 0}
+
+    angles, helix_dirs = [], []
+    for code, start, stop in segments:
+        direction = _principal_axis(ca[start:stop])
+        angle = np.degrees(np.arccos(min(1.0, abs(float(np.dot(direction, sym_axis))))))
+        angles.append(angle)
+        if code == "H":
+            helix_dirs.append(direction)
+
+    inter = [
+        np.degrees(np.arccos(min(1.0, abs(float(np.dot(helix_dirs[i], helix_dirs[j]))))))
+        for i in range(len(helix_dirs)) for j in range(i + 1, len(helix_dirs))
+    ]
+    return {
+        "max_axis_angle": float(max(angles)),
+        "mean_axis_angle": float(np.mean(angles)),
+        "max_inter_helix_angle": float(max(inter)) if inter else 0.0,
+        "max_helix_len": max((b - a for c, a, b in segments if c == "H"), default=0),
+        "max_strand_len": max((b - a for c, a, b in segments if c == "E"), default=0),
+    }
+
+
 def terminal_run(ss: str, code: str, end: str) -> int:
     """Length of the leading (N) or trailing (C) run of the given SS code, else 0."""
     seq = ss if end == "N" else ss[::-1]
@@ -313,6 +372,7 @@ def backbone_metrics(structure: Structure, expected_sym: int | None = None) -> d
         "sym_order_detected": frame["sym_order_detected"],
         "sym_rmsd": frame["sym_rmsd"],
     }
+    m.update(axis_alignment(ca, ss, axis))
     m.update(gyration_shape(ca))
     # The stated design target is that the whole ring is globular, not just one
     # subunit, so the same descriptors are computed over the full assembly.
