@@ -117,7 +117,7 @@ def test_several_config_files_merge_in_order():
     """Later files win, so a variant file need only state what differs from the base."""
     cfg = load_config(["configs/runs/base.yaml", "configs/runs/c3.yaml"])
     assert cfg.symmetry == "C3"                      # from the variant
-    assert cfg.get("target.n_backbones") == 50       # from the base
+    assert cfg.get("target.n_backbones") == 100      # from the base
     assert cfg.get("design.n_seq_per_backbone") == 10
 
 
@@ -241,3 +241,14 @@ def test_shipped_configs_are_present_and_tracked():
                              capture_output=True, text=True).stdout.split()
     for name in required:
         assert name in tracked, f"{name} exists but is not under version control"
+
+
+def test_filter_preset_layers_onto_a_run_config():
+    """The filter is applied by stacking a third file, not by editing the run config."""
+    cfg = load_config(["configs/runs/base.yaml", "configs/runs/c3.yaml",
+                       "configs/presets/axis_aligned.yaml"])
+    assert cfg.symmetry == "C3"                              # variant survives
+    assert cfg.get("target.n_backbones") == 100              # base survives
+    assert cfg.get("backbone_filter.rules") == [             # preset wins on its own key
+        "max_axis_angle <= 42", "strand_frac <= 0.30",
+        "max_helix_len <= 21", "height <= 33"]

@@ -1,0 +1,66 @@
+# Preset: subunits whose secondary structure runs along the symmetry axis.
+#
+#   cyclicnano run --config configs/runs/base.yaml --config configs/runs/c5.yaml \
+#                  --config configs/presets/axis_aligned.yaml \
+#                  --profile configs/profiles/amax.yaml
+#
+# The governing criterion is the interface. A helix lying parallel to the symmetry
+# axis extends along it and can pack against the matching helix of the neighbouring
+# subunit, so the contact runs the length of the helix. A splayed helix meets its
+# neighbour at a point, and the assembly has little holding it together. The angle
+# is therefore a statement about whether the subunit can oligomerise at all, not
+# about how the backbone looks.
+#
+# Derived from 28 hand-labelled backbones, 15 accepted and 13 rejected, drawn from
+# 100 C5 and 100 C3 designs. Every threshold corresponds to a stated reason for
+# rejection rather than to a search over the metric set.
+#
+# Perfect separation of 28 labels by four thresholds is expected rather than
+# impressive, so the margins matter more than the accuracy. Nearest rejected
+# backbone above each threshold, against the worst accepted one below it:
+#
+#   max_axis_angle   41.4 -> 45.0    3.6 degrees
+#   height           31.2 -> 33.3    2.1 angstrom
+#   max_helix_len      21 -> 22      1 residue      <-- accepted case sits on the line
+#   strand_frac      0.30 -> 0.35    0.05           <-- accepted case sits on the line
+#
+# The last two are cut against the data with no room to spare, and a handful of
+# further labels would likely cross them. Loosening both to 22 and 0.35 keeps all
+# 28 verdicts, because the backbones they would admit fail on height or angle
+# instead; they are left tight here by choice, not by evidence.
+#
+# Each rule earns its place. Of the 13 rejected backbones, height catches 11, the
+# axis angle 8, strand fraction 8 and helix length 4; none is redundant and none
+# alone is sufficient.
+#
+# Confirmed out of sample. Applied to the same 200 backbones, the rules passed 46
+# of 100 C5 and 20 of 100 C3, and the 12 designs that then survived self-consistency
+# were reviewed and accepted in full. Ten of those twelve were not among the 28
+# labelled cases the thresholds came from, so the rules transfer to backbones that
+# were not in view when they were written.
+#
+# Backbone clashes are deliberately not filtered here, though they are measured. A
+# diffusion backbone commonly carries a few close contacts, and three of the
+# accepted designs do. Placing a sequence on it will not move the backbone, so the
+# contact survives stage 02 unchanged. Stage 03 is what resolves the question:
+# AlphaFold2 folds the sequence from scratch and returns a physically plausible
+# structure, so a clash severe enough to be unrealisable shows up as a large
+# self-consistency RMSD and is rejected there. Screening for it twice would only
+# discard backbones the downstream check would have kept.
+
+backbone_filter:
+  rules:
+    # Secondary structure must run along the axis, or there is no interface to form.
+    - "max_axis_angle <= 42"
+
+    # Helices should dominate. Strand is permitted, and several accepted backbones
+    # carry some, but it must stay the minority.
+    - "strand_frac <= 0.30"
+
+    # A helix much longer than this spans more than the particle is tall, so it has
+    # to tilt or protrude, and in both cases it stops being usable as an interface.
+    - "max_helix_len <= 21"
+
+    # Extent along the symmetry axis. An elongated assembly puts its subunits end to
+    # end rather than side by side.
+    - "height <= 33"

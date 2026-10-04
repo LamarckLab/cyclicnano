@@ -179,31 +179,28 @@ def test_self_consistency_rmsd_runs_on_real_files():
     assert value > 0                                 # unrelated design and prediction
 
 
-# ---------------------------------------------------------------- three-helix preset
-def test_three_helix_preset_accepts_a_three_helix_bundle():
-    """The target topology must survive the preset written to select it."""
+# ---------------------------------------------------------------- axis-aligned preset
+def test_axis_aligned_preset_parses_against_real_metrics():
     from cyclicnano.config import load_config
     from cyclicnano.filters import FilterSet
-    cfg = load_config(profile="configs/presets/three_helix.yaml")
+    cfg = load_config(profile="configs/presets/axis_aligned.yaml")
     rules = FilterSet("backbone", cfg.get("backbone_filter.rules"))
-    metrics = backbone_metrics(read_pdb(str(PASS_PDB)), expected_sym=5)
-    rules.check_syntax(metrics)                      # the rules must at least parse
+    rules.check_syntax(backbone_metrics(read_pdb(str(PASS_PDB)), expected_sym=5))
 
 
-def test_three_helix_preset_rejects_a_backbone_carrying_strand():
+def test_axis_aligned_preset_rejects_a_strand_heavy_backbone():
+    """Both shipped fixtures are alpha/beta; one carries enough strand to be rejected."""
     from cyclicnano.config import load_config
     from cyclicnano.filters import FilterSet
-    cfg = load_config(profile="configs/presets/three_helix.yaml")
+    cfg = load_config(profile="configs/presets/axis_aligned.yaml")
     rules = FilterSet("backbone", cfg.get("backbone_filter.rules"))
-    for pdb in (PASS_PDB, FAIL_PDB):                 # both real fixtures are alpha/beta
-        metrics = backbone_metrics(read_pdb(str(pdb)), expected_sym=5)
-        if metrics["strand_frac"] > 0:
-            assert not rules.apply(metrics).passed
+    verdicts = [rules.apply(backbone_metrics(read_pdb(str(p)), expected_sym=5)).passed
+                for p in (PASS_PDB, FAIL_PDB)]
+    assert not all(verdicts)
 
 
-def test_three_helix_preset_states_only_topology_and_clash():
-    """Extra thresholds rejected nothing on the calibration set, so none are shipped."""
+def test_axis_aligned_preset_does_not_filter_on_clashes():
+    """Stage 03 settles whether a close contact matters; screening twice loses designs."""
     from cyclicnano.config import load_config
-    cfg = load_config(profile="configs/presets/three_helix.yaml")
-    assert set(cfg.get("backbone_filter.rules")) == {
-        "n_sse == 3", "strand_frac == 0", "n_clash == 0"}
+    rules = load_config(profile="configs/presets/axis_aligned.yaml").get("backbone_filter.rules")
+    assert not any("clash" in r for r in rules)

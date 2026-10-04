@@ -21,7 +21,11 @@ target:
   # 4 to 25. Yield fell with it, C5 from 7 of 50 delivered to 4. Do not raise this
   # without re-measuring the secondary-structure distribution.
   monomer_length: 60          # residues per chain
-  n_backbones: 50
+  # 100 rather than 50 because stage 01 selects on shape and stage 04 on
+  # self-consistency, and the two are close to independent. Measured on 200
+  # backbones, the shape filter passes 46 percent of C5 and 20 percent of C3, of
+  # which roughly a fifth then folds back, so a hundred yields a handful.
+  n_backbones: 100
 
 generate:
   batch_size: 10              # designs per RFdiffusion call; only affects checkpointing
