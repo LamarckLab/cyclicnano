@@ -257,6 +257,28 @@ def _rfd_cfg(*extra):
         "target.symmetry=C5", "target.monomer_length=60", *extra]))
 
 
+def test_noise_scale_is_absent_unless_asked_for():
+    """Unset, the command must stay byte-identical to the verified baseline."""
+    joined = " ".join(str(a) for a in build_command(_rfd_cfg(), Path("/run/b"), 10))
+    assert "noise_scale" not in joined
+
+
+def test_noise_scale_sets_translations_and_rotations_together():
+    """RFdiffusion exposes the two halves separately and advises tying them, so the
+    config carries one number and the stage emits both flags from it."""
+    argv = [str(a) for a in build_command(_rfd_cfg("generate.noise_scale=0.5"),
+                                          Path("/run/b"), 10)]
+    assert "denoiser.noise_scale_ca=0.5" in argv
+    assert "denoiser.noise_scale_frame=0.5" in argv
+
+
+def test_noise_scale_of_zero_is_emitted_rather_than_treated_as_unset():
+    """0 is a meaningful setting, and `if noise:` would silently drop it."""
+    argv = [str(a) for a in build_command(_rfd_cfg("generate.noise_scale=0"),
+                                          Path("/run/b"), 10)]
+    assert "denoiser.noise_scale_ca=0" in argv
+
+
 def test_rfdiffusion_command_uses_total_contig_length():
     argv = build_command(_rfd_cfg(), Path("/run/batch000"), 10)
     joined = " ".join(str(a) for a in argv)
@@ -697,6 +719,7 @@ def test_a_dry_run_works_on_an_empty_run_directory(capsys=None):
             code = cli.main(["run", "--dry-run",
                              "--set", "target.symmetry=C5",
                              "--set", "target.monomer_length=60",
+                             "--set", "generate.noise_scale=0.5",
                              "--set", "backend.kind=local",
                              "--set", f"run.outdir={tmp.as_posix()}"])
         out = buf.getvalue()
@@ -706,6 +729,7 @@ def test_a_dry_run_works_on_an_empty_run_directory(capsys=None):
         assert "run_inference.py" in out, out
         assert "protein_mpnn_run.py" in out, out
         assert "colabfold" in out, out
+        assert "denoiser.noise_scale_ca=0.5" in out, out
 
         # and nothing was actually produced
         assert not (tmp / ".done").exists()

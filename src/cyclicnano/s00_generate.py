@@ -73,6 +73,15 @@ def build_command(cfg: Config, out_prefix: Path, n_designs: int,
     if cfg.get("generate.deterministic", True):
         argv += ["inference.deterministic=True"]
 
+    # Both halves of the noise scale move together, on RFdiffusion's own advice, so
+    # the config carries one number. Left unset the flags are not emitted at all and
+    # the installed default of 1.0 applies, keeping the command identical to the
+    # verified baseline.
+    noise = cfg.get("generate.noise_scale")
+    if noise is not None:
+        argv += [f"denoiser.noise_scale_ca={_num(noise)}",
+                 f"denoiser.noise_scale_frame={_num(noise)}"]
+
     # Batches share one prefix and continue each other's numbering, so the stage ends
     # with design_0 .. design_N-1 rather than a restart inside every batch. The start
     # index is counted by the stage rather than left to RFdiffusion's -1 autodetect,

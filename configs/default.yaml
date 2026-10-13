@@ -63,6 +63,23 @@ generate:
     d_0: null                 # contact offset; RFdiffusion default is 2
     guide_scale: 2
     guide_decay: quadratic
+  # Reverse-diffusion noise, scaling what is added at each sampling step. null leaves
+  # the RFdiffusion default of 1.0, the amount used during training. Lower values make
+  # the output more regular at some cost in diversity.
+  #
+  # ONE key, not two: RFdiffusion exposes noise_scale_ca (translations) and
+  # noise_scale_frame (rotations) separately but recommends keeping them tied, so this
+  # sets both. Measured on 40 C5 backbones per condition, identical seeds throughout:
+  #
+  #   noise   >=3 helices   no beta   median longest helix   passes the preset
+  #   1.0        0/40        5/40            19 res               4/200
+  #   0.5        5/40       11/40            18 res               3/40
+  #   0.0        4/40       26/40            28 res               2/40
+  #
+  # 0.0 is a trap. It maximises helicity, and that is not the same as producing the
+  # wanted fold: the two-helix count rises to 34 of 40 and the helices lengthen to a
+  # median of 28 residues, which is the long-hairpin regime the protocol rules out.
+  noise_scale: null
   # Hydra aborts on a key its config does not define, so the seed flag is opt-in.
   # Set to the key your RFdiffusion build accepts (e.g. inference.seed) once verified.
   seed_key: null
