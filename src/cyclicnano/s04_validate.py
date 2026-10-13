@@ -6,6 +6,11 @@ the cutoff. That success rate is the ranking quantity the protocol ends on.
 
 Extra cutoffs from `validate.also_record` are stored alongside the primary one, so a
 stricter or looser definition can be applied later without re-predicting anything.
+
+The stage writes no directory of its own. Everything it produces is a column on the
+backbone or sequence table, and the ranked view of those columns is what the delivery
+stage lays out; a second ranking file here would only be the same numbers under a
+different name, free to disagree with the first.
 """
 from __future__ import annotations
 
@@ -34,7 +39,10 @@ def monomer_rmsd(design_pdb: str | Path, predicted_pdb: str | Path) -> float:
     return rmsd(a, b)
 
 
-def run(cfg: Config, state: RunState, force: bool = False) -> dict:
+def run(cfg: Config, state: RunState, force: bool = False, dry_run: bool = False) -> dict:
+    if dry_run:                                             # no subprocess to simulate
+        print(f"[{STAGE}] dry run, skipping")
+        return {}
     if state.is_done(STAGE) and not force:
         print(f"[{STAGE}] already done, skipping")
         return {}
@@ -96,11 +104,6 @@ def run(cfg: Config, state: RunState, force: bool = False) -> dict:
         bb_rows.append({**m, "final_pass": verdict.passed, "final_fail_reason": verdict.reason})
     state.backbones.upsert(bb_rows)
 
-    ranked = sorted(bb_rows, key=lambda r: (-r["success_rate"], r["best_rmsd"]))
-    out = state.stage_dir(STAGE) / "ranked_backbones.csv"
-    import pandas as pd
-    pd.DataFrame(ranked).to_csv(out, index=False)
-
     summary = {
         "n_backbones": len(bb_rows),
         "n_final_pass": sum(1 for r in bb_rows if r["final_pass"]),
@@ -109,6 +112,5 @@ def run(cfg: Config, state: RunState, force: bool = False) -> dict:
     }
     print(f"[{STAGE}] {summary['n_final_pass']}/{summary['n_backbones']} backbones pass; "
           f"mean success rate {summary['mean_success_rate']:.2f}")
-    print(f"[{STAGE}] ranking written to {out}")
     state.mark_done(STAGE)
     return summary

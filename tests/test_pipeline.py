@@ -9,13 +9,14 @@ per-backbone success rate is known exactly and can be asserted on.
 """
 from __future__ import annotations
 
+import json
 import shutil
 import tempfile
 from pathlib import Path
 
 import numpy as np
 
-from cyclicnano import s01_backbone_filter, s04_validate
+from cyclicnano import s01_backbone_filter, s04_delivery, s04_validate
 from cyclicnano.config import load_config, parse_overrides
 from cyclicnano.manifest import RunState
 from cyclicnano.pdbio import extract_monomer, read_pdb, write_pdb
@@ -75,9 +76,15 @@ class Harness:
                 sid = f"{bid}__seq{k:03d}"
                 path = preddir / f"{sid}_unrelaxed_rank_001_alphafold2_ptm_model_1_seed_000.pdb"
                 write_pdb(str(path), pred)
+                # colabfold writes the scores beside the structure under a parallel
+                # name; the delivery stage finds them by that name, so fake it too.
+                plddt = 92.0 if good else 60.0
+                (preddir / f"{sid}_scores_rank_001_alphafold2_ptm_model_1_seed_000.json"
+                 ).write_text(json.dumps({"plddt": [plddt] * 60, "ptm": 0.8}),
+                              encoding="utf-8")
                 rows.append({"sequence_id": sid, "backbone_id": bid, "seq_index": k,
                              "sequence": "A" * 60, "pred_path": str(path), "fold_ok": True,
-                             "mean_plddt": 92.0 if good else 60.0})
+                             "mean_plddt": plddt})
         self.state.sequences.upsert(rows)
         self.state.mark_done("02_sequences")
         self.state.mark_done("03_predictions")
@@ -127,7 +134,61 @@ def test_stage01_writes_a_filter_summary():
     h.seed_backbones()
     try:
         s01_backbone_filter.run(h.cfg, h.state)
-        assert (Path(h.cfg.outdir) / "01_backbone_filter" / "filter_summary.json").exists()
+        path = Path(h.cfg.outdir) / "01_backbone_filter" / "filter_summary.json"
+        assert path.exists()
+        summary = json.loads(path.read_text(encoding="utf-8"))
+        # The rules are restated beside the results: a reader of the output tree
+        # should not have to find the config that produced it.
+        assert summary["rules"] == ["n_clash == 0"]
+        assert len(summary["passed_backbones"]) == summary["n_pass"] == N_GOOD
+    finally:
+        h.close()
+
+
+def test_stage01_copies_the_survivors_into_their_own_folder():
+    h = Harness()
+    h.seed_backbones()
+    try:
+        s01_backbone_filter.run(h.cfg, h.state)
+        staged = s01_backbone_filter.passed_dir(h.state)
+        names = sorted(p.stem for p in staged.glob("*.pdb"))
+        assert names == sorted(h.state.backbones.load()
+                               .query("bb_pass")["backbone_id"].tolist())
+        assert len(names) == N_GOOD
+    finally:
+        h.close()
+
+
+def test_stage01_rebuilds_the_survivor_folder_when_the_rules_tighten():
+    """A backbone the new rules reject must not be left behind for stage 02 to pick
+    up: the folder is the handover, so a stale file there is a design nobody chose."""
+    h = Harness()
+    h.seed_backbones()
+    try:
+        s01_backbone_filter.run(h.cfg, h.state)
+        staged = s01_backbone_filter.passed_dir(h.state)
+        assert len(list(staged.glob("*.pdb"))) == N_GOOD
+
+        h.cfg.data["backbone_filter"]["rules"] = ["n_clash == 0", "n_res_monomer == 61"]
+        s01_backbone_filter.run(h.cfg, h.state, force=True)
+        assert list(staged.glob("*.pdb")) == []
+    finally:
+        h.close()
+
+
+def test_stage02_refuses_to_run_without_the_survivor_folder():
+    """It reads the folder, not the table; the two could otherwise disagree silently."""
+    from cyclicnano import s02_design
+    h = Harness()
+    h.seed_backbones()
+    try:
+        s01_backbone_filter.run(h.cfg, h.state)
+        shutil.rmtree(s01_backbone_filter.passed_dir(h.state))
+        try:
+            s02_design.run(h.cfg, h.state, Runner())
+            raise AssertionError("expected a RuntimeError")
+        except RuntimeError as exc:
+            assert "stage 01" in str(exc)
     finally:
         h.close()
 
@@ -146,14 +207,14 @@ def test_stage04_recovers_the_planted_success_rate():
         h.close()
 
 
-def test_stage04_writes_a_ranking():
+def test_stage04_writes_no_directory_of_its_own():
+    """Validation only adds columns. A second ranking file beside the delivery table
+    would be the same numbers under another name, free to disagree with it."""
     h, _ = _run_through_stage04()
     try:
-        path = Path(h.cfg.outdir) / "04_validate" / "ranked_backbones.csv"
-        assert path.exists()
-        import pandas as pd
-        ranked = pd.read_csv(path)
-        assert list(ranked["success_rate"]) == sorted(ranked["success_rate"], reverse=True)
+        assert not (Path(h.cfg.outdir) / "04_validate").exists()
+        bb = h.state.backbones.load()
+        assert "final_pass" in bb.columns and "success_rate" in bb.columns
     finally:
         h.close()
 
@@ -468,40 +529,99 @@ def test_proteinmpnn_intermediates_are_written_outside_the_results_dir():
     assert "/work/parsed_chains.jsonl" not in joined
 
 
-# ------------------------------------------------------------------ stage 05
+# ------------------------------------------------------------------ stage 04b
 def _run_through_delivery():
-    from cyclicnano import s05_delivery
     h, _ = _run_through_stage04()
-    s05_delivery.run(h.cfg, h.state)
-    return h, Path(h.cfg.outdir) / "05_delivery"
+    s04_delivery.run(h.cfg, h.state)
+    return h, Path(h.cfg.outdir) / "04_delivery"
 
 
-def test_delivery_writes_a_pdb_and_a_fasta_per_passing_design():
+def _filtered_ids(h):
+    bb = h.state.backbones.load()
+    return bb[bb["bb_pass"].fillna(False).astype(bool)]["backbone_id"].tolist()
+
+
+def test_delivery_writes_one_folder_per_backbone_that_passed_the_shape_filter():
     h, out = _run_through_delivery()
     try:
-        bb = h.state.backbones.load()
-        n = int(bb["final_pass"].fillna(False).astype(bool).sum())
-        assert n > 0
-        assert len(list(out.glob("*.pdb"))) == n
-        assert len(list(out.glob("*.fasta"))) == n
+        expected = _filtered_ids(h)
+        assert expected
+        folders = sorted(d.name for d in out.iterdir() if d.is_dir())
+        assert folders == sorted(expected)
         assert (out / "delivery.csv").exists()
+        assert (out / "delivery.json").exists()
     finally:
         h.close()
 
 
-def test_delivery_excludes_designs_that_failed_validation():
+def test_delivery_excludes_backbones_the_shape_filter_rejected():
+    """Stage 01 rejects on geometry and that verdict is final; stage 04 does not."""
     h, out = _run_through_delivery()
     try:
         bb = h.state.backbones.load()
-        failed = bb[~bb["final_pass"].fillna(False).astype(bool)]["backbone_id"]
-        for bid in failed:
-            assert not (out / f"{bid}.pdb").exists()
+        for bid in bb[~bb["bb_pass"].fillna(False).astype(bool)]["backbone_id"]:
+            assert not (out / str(bid)).exists()
     finally:
         h.close()
 
 
-def test_delivery_fasta_carries_the_best_sequence():
-    """The delivered sequence must be the one that folded back closest."""
+def test_delivery_keeps_the_near_misses_and_records_the_verdict():
+    """A backbone that misses the RMSD cutoff is still laid out, flagged rather than
+    dropped: the cutoffs are uncalibrated and a near miss is worth looking at."""
+    h, _ = _run_through_stage04()
+    try:
+        demoted = _filtered_ids(h)[0]
+        h.state.backbones.upsert([{"backbone_id": demoted, "final_pass": False,
+                                   "final_fail_reason": "planted"}])
+        s04_delivery.run(h.cfg, h.state)
+        out = Path(h.cfg.outdir) / "04_delivery"
+        assert (out / demoted).is_dir()
+
+        import pandas as pd
+        table = pd.read_csv(out / "delivery.csv").set_index("backbone_id")
+        assert not bool(table.loc[demoted, "final_pass"])
+        assert table["final_pass"].sum() == len(table) - 1
+        # ... and it sorts to the bottom, so the ranking still reads top-down.
+        assert pd.read_csv(out / "delivery.csv")["backbone_id"].iloc[-1] == demoted
+    finally:
+        h.close()
+
+
+def test_delivery_folder_holds_the_backbone_and_every_prediction():
+    h, out = _run_through_delivery()
+    try:
+        bid = _filtered_ids(h)[0]
+        folder = out / bid
+        assert (folder / f"{bid}.pdb").exists()
+        assert (folder / "sequences.fasta").exists()
+        assert (folder / "summary.csv").exists()
+        preds = folder / "predictions"
+        assert len(list(preds.glob("*.pdb"))) == N_SEQ          # all of them, not the best
+        assert len(list(preds.glob("*_scores.json"))) == N_SEQ
+
+        import pandas as pd
+        per_seq = pd.read_csv(folder / "summary.csv")
+        assert len(per_seq) == N_SEQ
+        assert per_seq["sc_rmsd"].notna().all()
+    finally:
+        h.close()
+
+
+def test_delivery_predictions_are_named_after_the_sequence_alone():
+    """colabfold encodes rank, model and seed in the filename. Only rank 1 is carried
+    here, so the rest of the name has nothing left to distinguish."""
+    h, out = _run_through_delivery()
+    try:
+        bid = _filtered_ids(h)[0]
+        names = sorted(p.name for p in (out / bid / "predictions").glob("*.pdb"))
+        assert names[0] == f"{bid}__seq000.pdb"
+        assert not any("rank_001" in n for n in names)
+    finally:
+        h.close()
+
+
+def test_delivery_fasta_marks_the_best_sequence():
+    """Every sequence is listed, and the one that folded back closest is tagged."""
     h, out = _run_through_delivery()
     try:
         seqs = h.state.sequences.load()
@@ -510,9 +630,11 @@ def test_delivery_fasta_carries_the_best_sequence():
         for row in table.to_dict("records"):
             group = seqs[seqs.backbone_id == row["backbone_id"]]
             assert abs(row["best_rmsd"] - group["sc_rmsd"].min()) < 1e-9
-            text = (out / f"{row['backbone_id']}.fasta").read_text()
-            assert row["sequence"] in text
-            assert text.startswith(">")
+            text = (out / str(row["backbone_id"]) / "sequences.fasta").read_text()
+            assert text.count(">") == N_SEQ
+            best_line = [l for l in text.splitlines() if l.endswith(" BEST")]
+            assert len(best_line) == 1
+            assert row["best_sequence_id"] in best_line[0]
     finally:
         h.close()
 
@@ -528,24 +650,78 @@ def test_delivery_is_sorted_best_first():
 
 
 def test_delivery_rerun_clears_stale_hits():
-    from cyclicnano import s05_delivery
     h, out = _run_through_delivery()
     try:
         (out / "zz_stale.pdb").write_text("junk", encoding="utf-8")
-        s05_delivery.run(h.cfg, h.state, force=True)
+        (out / "zz_stale_dir").mkdir()
+        s04_delivery.run(h.cfg, h.state, force=True)
         assert not (out / "zz_stale.pdb").exists()
+        assert not (out / "zz_stale_dir").exists()
     finally:
         h.close()
+
+
+def test_a_dry_run_touches_nothing_in_the_cpu_stages():
+    """--dry-run promises to print commands and run none. The CPU stages take no
+    Runner, so without being told they would do their real work: stage 01 would
+    rewrite the folder stage 02 reads, and delivery would lay out a tree from
+    whatever the tables happened to hold."""
+    h = Harness()
+    h.seed_backbones()
+    try:
+        s01_backbone_filter.run(h.cfg, h.state, dry_run=True)
+        s04_validate.run(h.cfg, h.state, dry_run=True)
+        s04_delivery.run(h.cfg, h.state, dry_run=True)
+        out = Path(h.cfg.outdir)
+        assert not (out / "01_backbone_filter").exists()
+        assert not (out / "04_delivery").exists()
+        for stage in ("01_backbone_filter", "04_validate", "04_delivery"):
+            assert not h.state.is_done(stage)
+        assert "bb_pass" not in h.state.backbones.load().columns
+    finally:
+        h.close()
+
+
+def test_a_dry_run_works_on_an_empty_run_directory(capsys=None):
+    """The one moment --dry-run is actually wanted is before the first real run, when
+    nothing upstream exists. Stages 02 and 03 used to raise there, so the flag failed
+    precisely when it was needed, and the GPU commands were never shown at all."""
+    import io
+    import contextlib
+    from cyclicnano import cli
+
+    tmp = Path(tempfile.mkdtemp(prefix="cyclicnano_dryrun_"))
+    try:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = cli.main(["run", "--dry-run",
+                             "--set", "target.symmetry=C5",
+                             "--set", "target.monomer_length=60",
+                             "--set", "backend.kind=local",
+                             "--set", f"run.outdir={tmp.as_posix()}"])
+        out = buf.getvalue()
+        assert code == 0, out
+
+        # every tool command is shown, not just filed away in commands.jsonl
+        assert "run_inference.py" in out, out
+        assert "protein_mpnn_run.py" in out, out
+        assert "colabfold" in out, out
+
+        # and nothing was actually produced
+        assert not (tmp / ".done").exists()
+        assert not (tmp / "logs" / "designs.fasta").exists()
+        assert list((tmp / "00_backbones").glob("*.pdb")) == []
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def test_delivery_requires_a_stage_04_verdict():
     h = Harness()
     h.seed_backbones()
     try:
-        from cyclicnano import s05_delivery
         s01_backbone_filter.run(h.cfg, h.state)
         try:
-            s05_delivery.run(h.cfg, h.state)
+            s04_delivery.run(h.cfg, h.state)
             raise AssertionError("expected a RuntimeError")
         except RuntimeError:
             pass

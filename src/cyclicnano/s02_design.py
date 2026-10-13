@@ -3,6 +3,12 @@
 The one non-negotiable here is tied positions. Without `--homooligomer 1` each chain
 of a Cn backbone is designed independently and the resulting sequences cannot form a
 homo-oligomer at all, so the config value is asserted rather than trusted.
+
+The input is the `passed/` folder written by stage 01, not the manifest: ProteinMPNN
+takes a directory, and keeping the selection in one place means there is no second
+copy to fall out of step. The stage directory is left holding the FASTA files and
+nothing else -- the jsonl intermediates go to `logs/`, and the `seqs/` level that
+ProteinMPNN insists on is flattened away once the files have been read.
 """
 from __future__ import annotations
 
@@ -12,6 +18,7 @@ from pathlib import Path
 from .config import Config
 from .manifest import RunState
 from .runner import Runner
+from .s01_backbone_filter import passed_dir
 
 STAGE = "02_sequences"
 
@@ -106,24 +113,38 @@ def run(cfg: Config, state: RunState, runner: Runner, force: bool = False) -> li
     df = state.backbones.load()
     if "bb_pass" in df.columns:
         df = df[df["bb_pass"].astype(bool)]
-    if df.empty:
-        raise RuntimeError("no backbones passed stage 01; loosen backbone_filter.rules")
 
     work = state.stage_dir(STAGE)
     aux = state.outdir / "logs"
     aux.mkdir(parents=True, exist_ok=True)
-    staged = work / "pdb_filtered"                      # the backbones that passed stage 01
-    if staged.exists():
-        shutil.rmtree(staged)
-    staged.mkdir(parents=True)
-    for record in df.to_dict("records"):                    # only passing backbones go to the GPU
-        shutil.copy2(record["backbone_path"], staged / f"{record['backbone_id']}.pdb")
+    staged = passed_dir(state)                              # only passing backbones go to the GPU
+
+    # The commands are built from directory paths alone, so a dry run can show them on
+    # an empty run directory, which is exactly when someone wants to read them. What it
+    # cannot do is parse output that was never produced, so the stage stops after that.
+    if runner.dry_run:
+        for tool, argv in build_commands(cfg, staged, work, aux):
+            runner.run(tool, argv)
+        return []
+
+    if df.empty:
+        raise RuntimeError("no backbones passed stage 01; loosen backbone_filter.rules")
+    if not staged.is_dir() or not any(staged.glob("*.pdb")):
+        raise RuntimeError(f"no backbones in {staged}; re-run stage 01 with --force")
 
     for tool, argv in build_commands(cfg, staged, work, aux):
         runner.run(tool, argv)
 
+    # ProteinMPNN always writes into <out_folder>/seqs. Lifting the FASTA files one
+    # level up leaves the stage directory flat, which is how every other stage reads.
+    seqs = work / "seqs"
+    if seqs.is_dir():
+        for fasta in seqs.glob("*.fa"):
+            fasta.replace(work / fasta.name)
+        shutil.rmtree(seqs, ignore_errors=True)
+
     rows = []
-    for fasta in sorted((work / "seqs").glob("*.fa")):
+    for fasta in sorted(work.glob("*.fa")):
         bid = fasta.stem
         for entry in parse_fasta(fasta):
             rows.append({

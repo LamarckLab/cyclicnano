@@ -123,6 +123,10 @@ class FilterSet:
                     counts[rule] += 1
         n = len(rows)
         return {
+            # The rules are repeated verbatim because the summary is the artefact that
+            # ends up beside the results: a reader should not have to find the config
+            # that produced a run to know what it selected on.
+            "rules": list(self.rules),
             "n_input": n,
             "n_pass": sum(1 for m in rows if self.apply(m).passed),
             "rejected_by_rule": counts,

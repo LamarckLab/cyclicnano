@@ -107,6 +107,9 @@ class Runner:
         printable = " ".join(shlex.quote(a) for a in full)
 
         if self.dry_run:
+            # Printed, not merely logged. The point of --dry-run is to read the command
+            # before committing a GPU to it, and a line in commands.jsonl is not that.
+            print(f"  [dry-run] {printable}")
             self._log({"tool": tool, "dry_run": True, "cmd": printable})
             return CommandResult(full, 0, "", "", 0.0)
 

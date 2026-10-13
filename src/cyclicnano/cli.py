@@ -11,8 +11,8 @@ import json
 import sys
 from pathlib import Path
 
-from . import (s00_generate, s01_backbone_filter, s02_design, s03_fold, s04_validate,
-               s05_delivery)
+from . import (s00_generate, s01_backbone_filter, s02_design, s03_fold, s04_delivery,
+               s04_validate)
 from .config import load_config, parse_overrides
 from .filters import FilterSet, RuleError
 from .geometry import backbone_metrics
@@ -20,7 +20,10 @@ from .manifest import RunState
 from .pdbio import read_pdb
 from .runner import runner_from_config
 
-STAGES = ["00", "01", "02", "03", "04", "05"]
+# Five tokens for six steps: validation produces no directory of its own, only
+# columns on the backbone table, so it is run as the first half of stage 04 rather
+# than given a number that would not appear in the output tree.
+STAGES = ["00", "01", "02", "03", "04"]
 _SAMPLE_METRICS = {
     "n_chains": 5, "n_res_monomer": 60, "helix_frac": 0.5, "strand_frac": 0.1,
     "loop_frac": 0.4, "n_sse": 3, "loop_max_len": 8, "nterm_helix_len": 5,
@@ -35,6 +38,8 @@ _SAMPLE_METRICS = {
     "min_interchain_dist": 3.0,
     "max_axis_angle": 25.0, "mean_axis_angle": 15.0,
     "max_inter_helix_angle": 20.0, "max_helix_len": 18, "max_strand_len": 6,
+    "max_centre_distance": 25.0, "mean_centre_distance": 18.0,
+    "monomer_max_centre_distance": 22.0,
     "success_rate": 0.5, "best_rmsd": 0.8, "median_rmsd": 1.2, "n_seqs": 10,
     "n_seqs_folded": 10, "best_plddt": 90.0,
 }
@@ -107,15 +112,14 @@ def main(argv: list[str] | None = None) -> int:
     if "00" in wanted:
         s00_generate.run(cfg, state, runner, force=args.force)
     if "01" in wanted:
-        s01_backbone_filter.run(cfg, state, force=args.force)
+        s01_backbone_filter.run(cfg, state, force=args.force, dry_run=args.dry_run)
     if "02" in wanted:
         s02_design.run(cfg, state, runner, force=args.force)
     if "03" in wanted:
         s03_fold.run(cfg, state, runner, force=args.force)
     if "04" in wanted:
-        s04_validate.run(cfg, state, force=args.force)
-    if "05" in wanted:
-        s05_delivery.run(cfg, state, force=args.force)
+        s04_validate.run(cfg, state, force=args.force, dry_run=args.dry_run)
+        s04_delivery.run(cfg, state, force=args.force, dry_run=args.dry_run)
 
     print(f"\ntables: {state.backbones.path}\n        {state.sequences.path}")
     return 0

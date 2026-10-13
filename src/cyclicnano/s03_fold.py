@@ -85,27 +85,43 @@ def run(cfg: Config, state: RunState, runner: Runner, force: bool = False) -> li
         print(f"[{STAGE}] WARNING: msa_mode={cfg.get('fold.msa_mode')!r} on de novo designs")
 
     df = state.sequences.load()
+    work = state.stage_dir(STAGE)
+    logs = state.outdir / "logs"
+
+    # As in stage 02: the command needs the FASTA path, not the FASTA, so it can be
+    # shown before anything upstream has run. Writing the file would leave a trace.
+    if runner.dry_run:
+        runner.run("colabfold", build_command(cfg, logs / "designs.fasta", work))
+        return []
+
     if df.empty:
         raise RuntimeError("no sequences in the manifest; run stage 02 first")
 
-    work = state.stage_dir(STAGE)
     records = df.to_dict("records")
-    fasta = write_fasta(records, work / "designs.fasta")
+    fasta = write_fasta(records, logs / "designs.fasta")     # an input, not a result
     runner.run("colabfold", build_command(cfg, fasta, work))
 
     rows = [{"sequence_id": r["sequence_id"], **collect(work, r["sequence_id"])} for r in records]
     state.sequences.upsert(rows)
 
     # colabfold_batch writes eight files per sequence; two are read downstream. The
-    # rest are plots, the single-sequence a3m and PAE dumps, so they are removed once
-    # the results have been collected.
+    # rest are plots, the single-sequence a3m and PAE dumps, and they go. The two
+    # run-level files it leaves in the output directory, its resolved config and the
+    # citation list, are provenance rather than results and move to logs/, so the
+    # stage directory ends up holding one structure and one score file per sequence
+    # and nothing else.
     if not cfg.get("fold.keep_all_outputs", False):
         keep = {Path(r["pred_path"]).name for r in rows if r.get("pred_path")}
         keep |= {p.name for p in work.glob("*_scores_rank_001_*.json")}
-        keep |= {"designs.fasta", "config.json", "cite.bibtex"}
+        archive = logs / "colabfold"
         removed = 0
         for path in work.iterdir():
-            if path.is_file() and path.name not in keep:
+            if not path.is_file() or path.name in keep:
+                continue
+            if path.name in ("config.json", "cite.bibtex"):
+                archive.mkdir(parents=True, exist_ok=True)
+                path.replace(archive / path.name)
+            else:
                 path.unlink()
                 removed += 1
         print(f"[{STAGE}] removed {removed} unused colabfold products")
