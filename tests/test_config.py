@@ -98,14 +98,6 @@ def test_shipped_validate_rules_parse():
     FilterSet("validate", cfg.get("validate.rules")).check_syntax(sample)
 
 
-def test_compact_subunit_preset_parses():
-    from synthetic import cyclic_oligomer
-    cfg = load_config(profile="configs/presets/compact_subunit.yaml",
-                      overrides=parse_overrides(["target.symmetry=C5"]))
-    FilterSet("backbone", cfg.get("backbone_filter.rules")).check_syntax(
-        backbone_metrics(cyclic_oligomer(n_sym=5), expected_sym=5))
-
-
 def test_zero_seed_is_rejected():
     """ProteinMPNN reads --seed 0 as 'pick a random one', which breaks reproducibility."""
     assert any("run.seed" in p for p in _cfg("run.seed=0").validate())
@@ -245,10 +237,26 @@ def test_shipped_configs_are_present_and_tracked():
 
 def test_filter_preset_layers_onto_a_run_config():
     """The filter is applied by stacking a third file, not by editing the run config."""
-    cfg = load_config(["configs/runs/base.yaml", "configs/runs/c3.yaml",
-                       "configs/presets/axis_aligned.yaml"])
-    assert cfg.symmetry == "C3"                              # variant survives
+    cfg = load_config(["configs/runs/base.yaml", "configs/runs/c5.yaml",
+                       "configs/presets/pure_three_helix.yaml"])
+    assert cfg.symmetry == "C5"                              # variant survives
     assert cfg.get("target.n_backbones") == 100              # base survives
     assert cfg.get("backbone_filter.rules") == [             # preset wins on its own key
-        "max_axis_angle <= 42", "strand_frac <= 0.30",
-        "max_helix_len <= 21", "height <= 33"]
+        "strand_frac == 0", "n_helices == 3"]
+
+
+def test_every_shipped_preset_parses_against_the_metric_set():
+    """A preset that names a metric the pipeline does not compute fails at startup,
+    which is far too late if the run was launched overnight."""
+    from cyclicnano.cli import _SAMPLE_METRICS
+    from cyclicnano.config import REPO_ROOT
+    from cyclicnano.filters import FilterSet
+
+    presets = sorted((REPO_ROOT / "configs" / "presets").glob("*.yaml"))
+    assert presets, "no presets shipped"
+    for preset in presets:
+        cfg = load_config(["configs/runs/base.yaml", "configs/runs/c5.yaml",
+                           f"configs/presets/{preset.name}"])
+        rules = cfg.get("backbone_filter.rules")
+        assert rules, f"{preset.name} sets no rules"
+        FilterSet("backbone", rules).check_syntax(_SAMPLE_METRICS)

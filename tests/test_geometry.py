@@ -116,6 +116,7 @@ def test_metric_set_is_complete():
         "assembly_asphericity", "assembly_shape_anisotropy", "assembly_axis_ratio",
         "max_axis_angle", "mean_axis_angle", "max_inter_helix_angle",
         "max_helix_len", "max_strand_len",
+        "max_centre_distance", "mean_centre_distance", "monomer_max_centre_distance",
     }
     assert required <= set(m), f"missing: {sorted(required - set(m))}"
 
@@ -200,3 +201,19 @@ def test_segment_lengths_are_reported():
     from cyclicnano.geometry import sse_segments
     segs = sse_segments("LLHHHHHHHHLLEEEEEELLHHH")   # 8-helix, 6-strand, 3-helix below min_len
     assert [(c, b - a) for c, a, b in segs] == [("H", 8), ("E", 6)]
+
+
+def test_centre_distance_bounds_the_assembly_in_every_direction():
+    """Unlike height, which only bounds extent along the symmetry axis."""
+    m = backbone_metrics(cyclic_oligomer(n_sym=5), expected_sym=5)
+    assert m["max_centre_distance"] > m["mean_centre_distance"] > 0
+    assert m["max_centre_distance"] >= m["max_radius"]        # radial distance is a component of it
+
+
+def test_centre_distance_is_measured_from_the_assembly_not_one_chain():
+    """The oligomer centroid, so a subunit far from centre registers as far."""
+    from synthetic import cyclic_oligomer as ring
+    near = backbone_metrics(ring(n_sym=5, ring_radius=16.0), expected_sym=5)
+    far = backbone_metrics(ring(n_sym=5, ring_radius=30.0), expected_sym=5)
+    assert far["max_centre_distance"] > near["max_centre_distance"] + 10
+    assert abs(far["monomer_max_centre_distance"] - near["monomer_max_centre_distance"]) < 1e-6

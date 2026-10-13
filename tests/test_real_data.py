@@ -1,12 +1,19 @@
 """Tests against real RFdiffusion output.
 
-Everything else in the suite runs on synthetic structures. These two fixtures are
-genuine C5 backbones from RFdiffusion (60 aa subunits, symmetry config, no guiding
-potentials), so they pin the parser and the metric layer against the actual file
-format rather than against assumptions about it.
+Everything else in the suite runs on synthetic structures. These three fixtures are
+genuine C5 backbones from RFdiffusion (60 aa subunits, symmetry config), so they pin
+the parser and the metric layer against the actual file format rather than against
+assumptions about it.
 
-Both files were produced by the calibration run described in
-configs/presets/compact_subunit.yaml.
+They are named for their fold, because that is what the stage-01 rules select on and
+each one is here to exercise a different verdict:
+
+    alpha_beta    two helices and two strands. Rejected: it carries beta.
+    two_helix     all helix, but a hairpin of a 26-mer and a 30-mer. Rejected: this
+                  is the shape that dominates the generated C5 set and the one the
+                  protocol rules out, the helices being too long to design against.
+    three_helix   three helices, no beta. Accepted. One backbone in the hundred
+                  generated looked like this, which is why a run generates 200.
 """
 from __future__ import annotations
 
@@ -18,13 +25,14 @@ from cyclicnano.geometry import backbone_metrics
 from cyclicnano.pdbio import read_pdb
 
 DATA = Path(__file__).resolve().parent / "data"
-PASS_PDB = DATA / "rfdiffusion_c5_60aa_pass.pdb"
-FAIL_PDB = DATA / "rfdiffusion_c5_60aa_fail.pdb"
+ALPHA_BETA_PDB = DATA / "rfdiffusion_c5_60aa_alpha_beta.pdb"
+TWO_HELIX_PDB = DATA / "rfdiffusion_c5_60aa_two_helix.pdb"
+THREE_HELIX_PDB = DATA / "rfdiffusion_c5_60aa_three_helix.pdb"
 
 
 def test_real_output_parses_into_five_chains():
     """RFdiffusion symmetric mode writes one chain per symmetry copy, not one long chain."""
-    struct = read_pdb(str(PASS_PDB))
+    struct = read_pdb(str(ALPHA_BETA_PDB))
     assert struct.n_chains == 5
     assert struct.chain_ids == ["A", "B", "C", "D", "E"]
     for cid in struct.chain_ids:
@@ -33,25 +41,25 @@ def test_real_output_parses_into_five_chains():
 
 def test_real_output_residue_numbering_is_continuous_across_chains():
     """Numbering runs 1..300 rather than restarting per chain; the parser must not assume."""
-    struct = read_pdb(str(PASS_PDB))
+    struct = read_pdb(str(ALPHA_BETA_PDB))
     assert int(struct.chains["A"].resnums[0]) == 1
     assert int(struct.chains["E"].resnums[-1]) == 300
 
 
 def test_real_output_has_only_backbone_atoms():
-    struct = read_pdb(str(PASS_PDB))
+    struct = read_pdb(str(ALPHA_BETA_PDB))
     assert set(struct.chains["A"].coords) == {"N", "CA", "C", "O"}
 
 
 def test_symmetry_is_recovered_from_real_output():
-    m = backbone_metrics(read_pdb(str(PASS_PDB)), expected_sym=5)
+    m = backbone_metrics(read_pdb(str(ALPHA_BETA_PDB)), expected_sym=5)
     assert abs(m["sym_order_detected"] - 5) < 0.01
     assert m["sym_rmsd"] < 0.01
     assert m["sym_order_ok"] is True
 
 
 def test_metrics_on_real_output_are_in_plausible_ranges():
-    m = backbone_metrics(read_pdb(str(PASS_PDB)), expected_sym=5)
+    m = backbone_metrics(read_pdb(str(ALPHA_BETA_PDB)), expected_sym=5)
     assert m["n_res_monomer"] == 60
     assert 0.0 <= m["helix_frac"] <= 1.0
     assert abs(m["helix_frac"] + m["strand_frac"] + m["loop_frac"] - 1.0) < 1e-9
@@ -61,22 +69,32 @@ def test_metrics_on_real_output_are_in_plausible_ranges():
     assert m["iface_contacts_per_chain"] > 0
 
 
-def test_preset_separates_the_two_real_fixtures():
-    """The calibrated preset must accept the good backbone and reject the poor one."""
-    cfg = load_config(profile="configs/presets/compact_subunit.yaml")
-    rules = FilterSet("backbone", cfg.get("backbone_filter.rules"))
-    good = backbone_metrics(read_pdb(str(PASS_PDB)), expected_sym=5)
-    poor = backbone_metrics(read_pdb(str(FAIL_PDB)), expected_sym=5)
-    rules.check_syntax(good)
-    assert rules.apply(good).passed, rules.apply(good).failed_rules
-    assert not rules.apply(poor).passed
+def _preset_rules():
+    cfg = load_config(profile="configs/presets/pure_three_helix.yaml")
+    return FilterSet("backbone", cfg.get("backbone_filter.rules"))
+
+
+def test_each_preset_rule_rejects_on_its_own_grounds():
+    """One fixture per verdict, and the rejections do not overlap by accident."""
+    rules = _preset_rules()
+
+    strandy = backbone_metrics(read_pdb(str(ALPHA_BETA_PDB)), expected_sym=5)
+    assert strandy["strand_frac"] > 0
+    assert "strand_frac == 0" in rules.apply(strandy).failed_rules
+
+    hairpin = backbone_metrics(read_pdb(str(TWO_HELIX_PDB)), expected_sym=5)
+    assert hairpin["strand_frac"] == 0                  # the beta rule has nothing to say
+    assert rules.apply(hairpin).failed_rules == ["n_helices == 3"]
+
+    bundle = backbone_metrics(read_pdb(str(THREE_HELIX_PDB)), expected_sym=5)
+    assert rules.apply(bundle).passed, bundle["ss_string"]
 
 
 def test_default_rules_accept_real_output():
     """The shipped defaults must not reject ordinary RFdiffusion output wholesale."""
     cfg = load_config()
     rules = FilterSet("backbone", cfg.get("backbone_filter.rules"))
-    assert rules.apply(backbone_metrics(read_pdb(str(PASS_PDB)), expected_sym=5)).passed
+    assert rules.apply(backbone_metrics(read_pdb(str(ALPHA_BETA_PDB)), expected_sym=5)).passed
 
 
 # ---------------------------------------------------------------- ProteinMPNN output
@@ -164,7 +182,7 @@ def test_real_prediction_is_a_single_chain_with_full_backbone():
 def test_real_prediction_has_real_residue_names_unlike_the_design():
     """The design backbone is poly-glycine, which is why sequence alignment cannot pair them."""
     design = [ln[17:20] for ln in
-              (DATA / "rfdiffusion_c5_60aa_pass.pdb").read_text(encoding="utf-8").splitlines()
+              (ALPHA_BETA_PDB).read_text(encoding="utf-8").splitlines()
               if ln.startswith("ATOM")]
     pred = [ln[17:20] for ln in PRED_PDB.read_text(encoding="utf-8").splitlines()
             if ln.startswith("ATOM")]
@@ -175,32 +193,43 @@ def test_real_prediction_has_real_residue_names_unlike_the_design():
 def test_self_consistency_rmsd_runs_on_real_files():
     from cyclicnano.s04_validate import monomer_rmsd
     assert monomer_rmsd(PRED_PDB, PRED_PDB) < 1e-9   # identical structures
-    value = monomer_rmsd(DATA / "rfdiffusion_c5_60aa_pass.pdb", PRED_PDB)
+    value = monomer_rmsd(ALPHA_BETA_PDB, PRED_PDB)
     assert value > 0                                 # unrelated design and prediction
 
 
-# ---------------------------------------------------------------- axis-aligned preset
-def test_axis_aligned_preset_parses_against_real_metrics():
-    from cyclicnano.config import load_config
-    from cyclicnano.filters import FilterSet
-    cfg = load_config(profile="configs/presets/axis_aligned.yaml")
-    rules = FilterSet("backbone", cfg.get("backbone_filter.rules"))
-    rules.check_syntax(backbone_metrics(read_pdb(str(PASS_PDB)), expected_sym=5))
+# ------------------------------------------------------------ pure-three-helix preset
+def test_preset_parses_against_real_metrics():
+    _preset_rules().check_syntax(
+        backbone_metrics(read_pdb(str(ALPHA_BETA_PDB)), expected_sym=5))
 
 
-def test_axis_aligned_preset_rejects_a_strand_heavy_backbone():
-    """Both shipped fixtures are alpha/beta; one carries enough strand to be rejected."""
-    from cyclicnano.config import load_config
-    from cyclicnano.filters import FilterSet
-    cfg = load_config(profile="configs/presets/axis_aligned.yaml")
-    rules = FilterSet("backbone", cfg.get("backbone_filter.rules"))
-    verdicts = [rules.apply(backbone_metrics(read_pdb(str(p)), expected_sym=5)).passed
-                for p in (PASS_PDB, FAIL_PDB)]
-    assert not all(verdicts)
+def test_preset_accepts_only_the_three_helix_fixture():
+    rules = _preset_rules()
+    verdicts = {p.stem: rules.apply(backbone_metrics(read_pdb(str(p)), expected_sym=5)).passed
+                for p in (ALPHA_BETA_PDB, TWO_HELIX_PDB, THREE_HELIX_PDB)}
+    assert sum(verdicts.values()) == 1, verdicts
+    assert verdicts[THREE_HELIX_PDB.stem]
 
 
-def test_axis_aligned_preset_does_not_filter_on_clashes():
+def test_three_helix_fixture_really_is_three_helices_and_no_beta():
+    """Guards the fixture itself: if the SS assignment drifts, the preset tests above
+    would start passing or failing for a reason that has nothing to do with the rules."""
+    m = backbone_metrics(read_pdb(str(THREE_HELIX_PDB)), expected_sym=5)
+    assert m["strand_frac"] == 0.0
+    assert m["n_helices"] == 3
+    assert m["helix_frac"] > 0.8
+    assert m["ss_string"].count("E") == 0
+
+
+def test_preset_does_not_filter_on_clashes():
     """Stage 03 settles whether a close contact matters; screening twice loses designs."""
-    from cyclicnano.config import load_config
-    rules = load_config(profile="configs/presets/axis_aligned.yaml").get("backbone_filter.rules")
-    assert not any("clash" in r for r in rules)
+    assert not any("clash" in r for r in _preset_rules().rules)
+
+
+def test_preset_does_not_filter_on_size():
+    """The radius ceiling was dropped: the only qualifying C5 backbone measured 27.9,
+    above every threshold under consideration, so keeping it took the yield to zero."""
+    rules = _preset_rules().rules
+    assert not any("centre_distance" in r or "height" in r for r in rules)
+    m = backbone_metrics(read_pdb(str(THREE_HELIX_PDB)), expected_sym=5)
+    assert m["max_centre_distance"] > 27                 # and it is still measured

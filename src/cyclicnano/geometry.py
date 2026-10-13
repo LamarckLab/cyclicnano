@@ -346,6 +346,14 @@ def backbone_metrics(structure: Structure, expected_sym: int | None = None) -> d
     along = rel @ axis
     radial = np.linalg.norm(rel - np.outer(along, axis), axis=1)
 
+    # Distance from the assembly centroid to its furthest CA: the radius of the
+    # smallest sphere about the centre that contains the whole particle. Unlike
+    # `height`, which bounds extent along the symmetry axis alone, this bounds it in
+    # every direction, so a flat wide assembly cannot pass by being short.
+    all_ca = structure.all_ca()
+    centre_distances = np.linalg.norm(all_ca - all_ca.mean(0), axis=1)
+    mono_ca = ca - ca.mean(0)
+
     rg = float(np.sqrt(((ca - ca.mean(0)) ** 2).sum(axis=1).mean()))
     rg_ref = 2.2 * n_res ** 0.38                            # compact-globular reference
 
@@ -362,6 +370,9 @@ def backbone_metrics(structure: Structure, expected_sym: int | None = None) -> d
         "cterm_helix_len": terminal_run(ss, "H", "C"),
         "rg": rg,
         "rg_ratio": rg / rg_ref,
+        "max_centre_distance": float(centre_distances.max()),
+        "mean_centre_distance": float(centre_distances.mean()),
+        "monomer_max_centre_distance": float(np.linalg.norm(mono_ca, axis=1).max()),
         "n_helices": len(_runs(ss, "H")),                   # subunit topology, e.g. 3 for a 3-helix fold
         "contact_order": relative_contact_order(ca),
         "iface_contacts_per_chain": interface_contacts(structure),

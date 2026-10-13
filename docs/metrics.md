@@ -80,10 +80,13 @@ hairpin far more cleanly than `rg_ratio` does.
 
 Note the calibration: a helix bundle is inherently somewhat prolate, so a threshold
 tight enough to look "spherical" in the everyday sense would reject exactly the folds
-that are wanted. The `globular_3helix` preset uses 0.30, which accepts the bundle at
-0.24 and rejects the hairpin at 0.46. These reference values come from idealised
-synthetic fixtures; real RFdiffusion output is less regular, so expect to loosen them
-against the per-rule counts in `filter_summary.json`.
+that are wanted. A cutoff of 0.30 accepts the bundle at 0.24 and rejects the hairpin
+at 0.46. These reference values come from idealised synthetic fixtures; real
+RFdiffusion output is less regular, so expect to loosen them against the per-rule
+counts in `filter_summary.json`.
+
+Neither metric is used by the shipped preset, which selects on secondary structure
+instead. They remain computed and available as rules.
 
 ## Symmetry
 

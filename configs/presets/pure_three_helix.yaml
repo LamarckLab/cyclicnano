@@ -1,0 +1,55 @@
+# Preset: subunits that are three helices and nothing else.
+#
+#   cyclicnano run --config configs/runs/base.yaml --config configs/runs/c5.yaml \
+#                  --config configs/presets/pure_three_helix.yaml \
+#                  --profile configs/profiles/amax.yaml
+#
+# Two rules, and between them they are strict enough to change how the run must be
+# sized. Read the yield note at the bottom before using this on a fresh symmetry.
+#
+# NO BETA AT ALL. Not a low fraction, none. In the generated C5 set the beta that
+# appears is almost always sheet meeting sheet edge-on across the subunit interface,
+# which is not a stable way to hold an oligomer together, and beta-rich designs also
+# express poorly at the bench. Both objections are experimental; neither is visible
+# to any metric computed downstream, so a design can be perfectly self-consistent in
+# stage 04 and still be useless. The cap is therefore set at the only value that
+# cannot be argued with.
+#
+# Relaxing it was tried and rejected on inspection. At noise 0.5 the threshold is not
+# inert the way it was at the default -- `strand_frac <= 0.10` takes 5 backbones in 200
+# to 11 -- and of the six it admits, four have their strand far enough from the
+# neighbouring subunit that no edge-on sheet is geometrically possible (14 to 26 A
+# between the strands of adjacent chains, against the 4.5 to 5.5 A of a real pairing).
+# The rule stayed at zero anyway: the admitted backbones carry visibly more loop, which
+# the strand fraction does not measure and which is its own problem.
+#
+# EXACTLY THREE HELICES. Three-segment helical subunits are the ones that have
+# validated at the bench. The alternative that dominates the generated set is the
+# two-helix hairpin, whose individual helices are too long to be usable: there is
+# nothing to vary but their length, and a long straight helix gives the fusion stage
+# no purchase. Four-helix subunits with no beta do occur (three of them in the C3
+# set) and are excluded here by choice, not by oversight; relax to `n_helices >= 3`
+# if they are wanted.
+#
+# WHAT WAS REMOVED. The `max_centre_distance` ceiling of the previous preset is gone.
+# It was introduced to stop the subunit being drawn out into a long thin shape, and
+# at the thresholds under consideration (24 to 27) it would have rejected the single
+# qualifying C5 backbone, design_94, whose radius is 27.9 -- that is, it would have
+# taken the C5 yield to zero. A three-helix bundle of 60 residues is self-limiting in
+# size anyway, so the ceiling bought little. The metric is still computed and written
+# to the backbone table, so it can be brought back as a rule without recomputation.
+#
+# YIELD, measured on the first 100 backbones of each symmetry. C5: 1 pass. C3: 9.
+# The C5 helix-count distribution is {0 helices: 8, 1: 19, 2: 71, 3: 2}, so the
+# two-helix hairpin is not a minority case there, it is the default output. At one
+# percent, a run has to generate a few hundred backbones to deliver a handful, which
+# is why `target.n_backbones` is 200 and `design.n_seq_per_backbone` is 20: fewer
+# backbones survive, so each one is sampled harder.
+
+backbone_filter:
+  rules:
+    # Interface stability and expression, not geometry. Edge-on sheet contacts.
+    - "strand_frac == 0"
+
+    # The fold that validates at the bench. Excludes the two-helix hairpin.
+    - "n_helices == 3"

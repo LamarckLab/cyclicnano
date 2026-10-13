@@ -82,7 +82,7 @@ generate:
 #   - "helix_frac >= 0.35"               # loop-dominated backbones are undesignable
 #   - "rg_ratio <= 1.30"                 # compact relative to 2.2 * N^0.38
 #   - "shape_anisotropy <= 0.50"         # 0 is a sphere, 1 is a rod
-# configs/presets/compact_subunit.yaml holds a calibrated set.
+# configs/presets/ holds the rule sets that have been used, each with its reasoning.
 backbone_filter:
   rules: []
 
