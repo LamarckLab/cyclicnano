@@ -112,9 +112,38 @@ class Config:
             path = Path(str(self.get("run.outroot", "runs"))) / str(self.require("run.name"))
         return path if _is_absolute(path) else (REPO_ROOT / path).resolve()
 
+    def unknown_keys(self) -> list[str]:
+        """Keys the merged config carries that `default.yaml` does not define.
+
+        default.yaml is documented as the complete parameter surface, so anything not
+        in it is a typo or a misplacement, and both are silent: a key under the wrong
+        section is simply never read. That cost a run. A dropped `generate:` header put
+        `noise_scale` under `target:`, nothing complained, and five hundred backbones
+        were generated at the default noise while the config said otherwise.
+
+        Where default.yaml holds a non-dict or an empty dict, the subtree below is
+        free-form (machine-specific env vars, image names) and is not descended into.
+        """
+        defaults = yaml.safe_load(DEFAULT_CONFIG.read_text(encoding="utf-8")) or {}
+
+        def walk(got: dict, want: dict, prefix: str) -> list[str]:
+            out = []
+            for key, value in got.items():
+                path = f"{prefix}{key}"
+                if key not in want:
+                    out.append(path)
+                elif isinstance(value, dict) and isinstance(want[key], dict) and want[key]:
+                    out += walk(value, want[key], f"{path}.")
+            return out
+
+        return sorted(walk(self.data, defaults, ""))
+
     def validate(self) -> list[str]:
         """Cheap startup checks; returns a list of human-readable problems."""
         problems = []
+        for key in self.unknown_keys():
+            problems.append(f"{key} is not a key defined in configs/default.yaml; it is "
+                            f"being ignored. Check the spelling and the section it sits under")
         try:
             self.sym_order
         except ValueError as exc:

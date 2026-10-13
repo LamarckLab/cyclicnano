@@ -211,6 +211,32 @@ def test_amax_profile_sends_results_outside_the_code_directory():
         assert not cfg.outdir.is_relative_to(REPO_ROOT)
 
 
+def test_shipped_configs_define_no_key_default_yaml_does_not():
+    """The regression this exists for: an edit dropped the `generate:` header from
+    base.yaml, so batch_size and noise_scale sat under `target:` where nothing reads
+    them. Every test passed, the config said noise 0.5, and the run used 1.0."""
+    for variant in ("c5", "c3"):
+        cfg = load_config(["configs/runs/base.yaml", f"configs/runs/{variant}.yaml",
+                           "configs/presets/pure_three_helix.yaml"],
+                          "configs/profiles/amax.yaml")
+        assert cfg.unknown_keys() == [], (variant, cfg.unknown_keys())
+        assert cfg.validate() == [], (variant, cfg.validate())
+
+
+def test_a_misplaced_key_is_reported_rather_than_ignored():
+    cfg = load_config(overrides=parse_overrides(["target.noise_scale=0.5"]))
+    assert "target.noise_scale" in cfg.unknown_keys()
+    assert any("target.noise_scale" in p for p in cfg.validate())
+
+
+def test_free_form_subtrees_are_not_policed():
+    """backend.tool_env is an empty dict in the defaults by design: what goes in it is
+    machine-specific, so the check must stop descending there rather than reject it."""
+    cfg = load_config(profile="configs/profiles/amax.yaml")
+    assert cfg.get("backend.tool_env.colabfold")          # the profile does fill it
+    assert cfg.unknown_keys() == []
+
+
 def test_shipped_configs_are_present_and_tracked():
     """They were not tracked: an unanchored runs/ in .gitignore also matched
     configs/runs/, so git add skipped them without a word.
