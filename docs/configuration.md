@@ -28,7 +28,7 @@ RFdiffusion contig length.
 |---|---|
 | `symmetry` | `C2` through `C12`. |
 | `monomer_length` | Residues **per chain**. The total contig length handed to RFdiffusion is this times the symmetry order. |
-| `n_backbones` | Total backbones to generate. |
+| `n_backbones` | Total backbones to generate. Size it from the stage-01 yield of the preset in use, not from how many designs you want: the shipped preset passes 1 percent of C5 and 9 percent of C3. |
 
 ### `generate`
 Batch size, diffusion steps, and the oligomer-contact guiding potential. Anything in
@@ -47,10 +47,21 @@ The exception is a metric that is already boolean, such as `sym_order_ok`.
 An empty rule list passes everything, which is the right setting for a first
 exploratory run where you want the metric distributions before choosing thresholds.
 
+Rule sets that have been used are kept in `configs/presets/` and stacked as an extra
+`--config` file rather than pasted into a run config, so the run config stays the same
+across every experiment and the filter is the only thing that varies:
+
+```bash
+cyclicnano run --config configs/runs/base.yaml --config configs/runs/c5.yaml                --config configs/presets/pure_three_helix.yaml                --profile configs/profiles/amax.yaml
+```
+
+Each preset file carries, in its header, why its thresholds are what they are and
+what they were measured against. Read that before reusing one.
+
 ### `design`
 | Key | Meaning |
 |---|---|
-| `n_seq_per_backbone` | Sequences per backbone. The stage-04 success rate is a fraction of this, so small values give a coarse, noisy estimate. |
+| `n_seq_per_backbone` | Sequences per backbone. The stage-04 success rate is a fraction of this, so small values give a coarse, noisy estimate: at 10 it moves in steps of 0.1. |
 | `sampling_temp` | ProteinMPNN sampling temperature. |
 | `use_soluble_model` | Use the soluble-protein weights. |
 | `omit_aas` | Residues to exclude. The default `CX` avoids free cysteines. |

@@ -131,13 +131,26 @@ runs/<name>/
 ├── tables/
 │   ├── backbones.csv        one row per backbone, all metrics, pass flags, rankings
 │   └── sequences.csv        one row per designed sequence, RMSD and pLDDT
-├── 00_backbones/            RFdiffusion output
-├── 01_backbone_filter/      filter_summary.json: per-rule rejection counts
-├── 02_sequences/            ProteinMPNN output
-├── 03_predictions/          AlphaFold2 output
-├── 04_validate/             ranked_backbones.csv
+├── 00_backbones/            RFdiffusion output, one PDB per backbone
+├── 01_backbone_filter/
+│   ├── filter_summary.json  the rules, and the rejection count of each
+│   └── passed/              the backbones that survived; stage 02 reads this
+├── 02_sequences/            one ProteinMPNN FASTA per backbone
+├── 03_predictions/          two files per sequence: AlphaFold2 PDB and scores
+├── 04_delivery/
+│   ├── delivery.csv         one row per backbone: success rate, best RMSD, verdict
+│   └── <backbone_id>/       backbone, every sequence, every prediction
 └── logs/commands.jsonl      every subprocess, its exit code and its runtime
 ```
+
+Self-consistency scoring has no directory. It writes columns on the backbone table,
+and the ranked view of those columns is `delivery.csv`; a second ranking file would
+be the same numbers under another name, free to disagree with the first.
+
+Delivery covers every backbone that passed the **shape** filter, flagged with its
+stage-04 verdict rather than filtered by it. The RMSD cutoffs are uncalibrated and a
+near miss is worth looking at, so the information is kept and the judgement left to
+the reader.
 
 `backbones.csv` is the artifact to keep. It holds every metric for every candidate,
 including the rejected ones, which is what makes a filter ablation possible after the
@@ -161,24 +174,37 @@ either nothing or unrelated hits, and the resulting confidence is not meaningful
 ## Testing
 
 ```bash
-pytest                     # 86 checks
+pytest                     # 169 checks
 python tests/run_all.py    # same suite without pytest
 ```
 
 The suite runs against synthetic Cn oligomers built from ideal helices, so the
 symmetry order, chain RMSD, helix fraction and clash count are all known in advance.
-It needs no GPU, no model weights and no external tools, and it covers the stage 01
-and stage 04 logic end to end by synthesising the outputs of the GPU stages.
+It needs no GPU, no model weights and no external tools, and it covers stages 01 and
+04 end to end by synthesising the outputs of the GPU stages. Three real RFdiffusion
+C5 backbones are shipped as fixtures, one per stage-01 verdict: an alpha/beta one,
+a two-helix hairpin and a three-helix bundle.
 
 ## What the numbers rest on
 
 The two filters are not equally well founded, and it is worth knowing which is which.
 
-**Stage 01, shape.** Four thresholds derived from 28 hand-labelled backbones, each
-rejection accompanied by a stated reason, then confirmed on designs that were not in
-the labelled set. `configs/presets/axis_aligned.yaml` records the margin on each
-threshold; two of them sit directly on the data and would likely move given more
-labels.
+**Stage 01, shape.** Not calibrated here, and not meant to be. The shipped preset,
+`configs/presets/pure_three_helix.yaml`, requires no beta at all and exactly three
+helices, on two experimental grounds: beta-rich designs express poorly, and the beta
+that appears in the generated set is mostly sheet meeting sheet edge-on across the
+subunit interface, which does not hold an oligomer together. Neither objection is
+visible to any metric computed downstream. An earlier preset derived four thresholds
+from 28 hand-labelled backbones; the rule here overrides those labels deliberately,
+and the file says so and says what it cost.
+
+The preset is strict and the yield reflects it: about 2.5 percent of C5 backbones
+survive it, measured twice at 200 backbones each. That is why `n_backbones` is 500.
+C3 runs richer, around 9 percent.
+
+Relaxing the strand rule was tried and rejected. Admitting up to 0.10 strand doubles
+the count, and the backbones it admits carry noticeably more loop; the rule stays at
+zero on that inspection.
 
 **Stage 04, self-consistency.** `rmsd_cutoff: 1.0`, `plddt_cutoff: 80`,
 `success_rate >= 0.3` and `best_rmsd <= 1.0` are **not calibrated against anything**.
