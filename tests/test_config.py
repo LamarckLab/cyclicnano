@@ -109,8 +109,8 @@ def test_several_config_files_merge_in_order():
     """Later files win, so a variant file need only state what differs from the base."""
     cfg = load_config(["configs/runs/base.yaml", "configs/runs/c3.yaml"])
     assert cfg.symmetry == "C3"                      # from the variant
-    assert cfg.get("target.n_backbones") == 100      # from the base
-    assert cfg.get("design.n_seq_per_backbone") == 10
+    assert cfg.get("target.n_backbones") == 500      # from the base
+    assert cfg.get("design.n_seq_per_backbone") == 20
 
 
 def test_shipped_run_configs_differ_only_in_symmetry_and_naming():
@@ -237,6 +237,17 @@ def test_free_form_subtrees_are_not_policed():
     assert cfg.unknown_keys() == []
 
 
+def test_the_shipped_base_actually_delivers_the_noise_scale():
+    """Reads the value through the same path the stage does, then checks it reaches
+    the emitted command. Asserting on the YAML alone would not have caught the bug."""
+    from cyclicnano.s00_generate import build_command
+    cfg = load_config(["configs/runs/base.yaml", "configs/runs/c5.yaml"])
+    assert cfg.get("generate.noise_scale") == 0.5
+    argv = [str(a) for a in build_command(cfg, Path("/out/design"), 10)]
+    assert "denoiser.noise_scale_ca=0.5" in argv
+    assert "denoiser.noise_scale_frame=0.5" in argv
+
+
 def test_shipped_configs_are_present_and_tracked():
     """They were not tracked: an unanchored runs/ in .gitignore also matched
     configs/runs/, so git add skipped them without a word.
@@ -266,7 +277,7 @@ def test_filter_preset_layers_onto_a_run_config():
     cfg = load_config(["configs/runs/base.yaml", "configs/runs/c5.yaml",
                        "configs/presets/pure_three_helix.yaml"])
     assert cfg.symmetry == "C5"                              # variant survives
-    assert cfg.get("target.n_backbones") == 100              # base survives
+    assert cfg.get("target.n_backbones") == 500              # base survives
     assert cfg.get("backbone_filter.rules") == [             # preset wins on its own key
         "strand_frac == 0", "n_helices == 3"]
 

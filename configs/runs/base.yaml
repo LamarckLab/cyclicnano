@@ -21,17 +21,62 @@ target:
   # 4 to 25. Yield fell with it, C5 from 7 of 50 delivered to 4. Do not raise this
   # without re-measuring the secondary-structure distribution.
   monomer_length: 60          # residues per chain
-  # 100 rather than 50 because stage 01 selects on shape and stage 04 on
-  # self-consistency, and the two are close to independent. Measured on 200
-  # backbones, the shape filter passes 46 percent of C5 and 20 percent of C3, of
-  # which roughly a fifth then folds back, so a hundred yields a handful.
-  n_backbones: 100
+  # Sized by the stage-01 yield, which is low and has stayed low: 4 of 200 C5 at the
+  # default noise and 5 of 200 at 0.5, so about 2.5 percent. Nothing tried so far moves
+  # that rate much; see the note on noise_scale for what does and does not help, and
+  # why. Five hundred is therefore a volume decision rather than a clever one, and at
+  # 1.4 minutes a backbone it costs about twelve GPU-hours. Expect a dozen C5 through
+  # stage 01. C3 runs richer, around 9 percent when last measured.
+  n_backbones: 500
 
 generate:
-  batch_size: 10              # designs per RFdiffusion call; only affects checkpointing
+  # NOT only checkpointing, which is what this comment used to claim. Each batch is a
+  # separate RFdiffusion process, and the first design in a process does not reproduce
+  # the same design generated later in a longer one: 40 designs in one call and the
+  # same 40 in four calls of ten agreed on 37, and disagreed exactly on the three that
+  # sat at a batch boundary. One of those three came out a different fold entirely,
+  # 12.7 A apart, so the divergence is not cosmetic. The cause is first-call state in
+  # the GPU libraries, which a seed does not control. A run is therefore reproducible
+  # against another run of the SAME batch_size, and changing this value changes which
+  # backbones you get.
+  batch_size: 10
+
+  # Reverse-diffusion noise. Measured over 200 backbones per condition, not the 40 the
+  # first version of this comment relied on:
+  #
+  #   noise   3 helices   >=3 helices   no beta   2 helices   passes the preset
+  #   1.0        6/200        9/200      30/200     134/200        4/200
+  #   0.5       14/200       16/200      49/200     145/200        5/200
+  #
+  # Read that carefully, because the obvious reading is wrong. Dropping the noise more
+  # than doubles the three-helix count and lifts the all-helical count by half, and it
+  # still delivers no more backbones through stage 01, because the two gains land on
+  # different structures: of the 49 with no beta, 41 are two-helix hairpins, and of the
+  # 14 with three helices, 9 carry some beta. The marginals move and the intersection
+  # does not.
+  #
+  # A pilot of 40 per condition read 3/40 here and 0/40 at the default. That was a
+  # cluster, not a rate: in the 200-backbone run the first 40 gave 3 and the next 160
+  # gave 2. The setting is kept because more three-helix backbones is the scarce
+  # resource and it supplies them, not because it raises the delivery count.
+  #
+  # 0.0 was tested and rejected. It maximises helix content, which is not the goal: the
+  # two-helix count rises to 34 of 40 and the median longest helix from 19 to 28
+  # residues, which is the long-hairpin fold the protocol rules out.
+  #
+  # Diversity cost at 0.5 is small: median pairwise CA RMSD unchanged at 10.6 A, and
+  # near-duplicate pairs below 2 A went 1 -> 3 out of 780. At 0.0 it is 9.
+  #
+  # The C3 results on disk predate this and were generated at 1.0; each run records
+  # what it actually used in logs/resolved_config.yaml.
+  noise_scale: 0.5
 
 design:
-  n_seq_per_backbone: 10
+  # 20 rather than 10 because the strict stage-01 filter leaves few backbones, and
+  # the stage-04 success rate is a fraction of this number: at 10 sequences it moves
+  # in steps of 0.1, which is too coarse to rank a handful of survivors against each
+  # other. Fewer backbones survive, so each is sampled harder.
+  n_seq_per_backbone: 20
 
 validate:
   rmsd_cutoff: 1.0            # CA RMSD for a sequence to count as folding back
