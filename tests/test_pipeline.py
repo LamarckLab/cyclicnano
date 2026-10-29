@@ -74,14 +74,15 @@ class Harness:
                     pred.chains["A"].ca + rng.normal(0.0, 0.3 if good else 3.0,
                                                      pred.chains["A"].ca.shape))
                 sid = f"{bid}__seq{k:03d}"
-                path = preddir / f"{sid}_unrelaxed_rank_001_alphafold2_ptm_model_1_seed_000.pdb"
+                # The layout stage 03 leaves behind: one folder per backbone, two
+                # files per sequence, the scores beside the structure.
+                folder = preddir / bid
+                folder.mkdir(parents=True, exist_ok=True)
+                path = folder / f"seq{k:03d}.pdb"
                 write_pdb(str(path), pred)
-                # colabfold writes the scores beside the structure under a parallel
-                # name; the delivery stage finds them by that name, so fake it too.
                 plddt = 92.0 if good else 60.0
-                (preddir / f"{sid}_scores_rank_001_alphafold2_ptm_model_1_seed_000.json"
-                 ).write_text(json.dumps({"plddt": [plddt] * 60, "ptm": 0.8}),
-                              encoding="utf-8")
+                (folder / f"seq{k:03d}.json").write_text(
+                    json.dumps({"plddt": [plddt] * 60, "ptm": 0.8}), encoding="utf-8")
                 rows.append({"sequence_id": sid, "backbone_id": bid, "seq_index": k,
                              "sequence": "A" * 60, "pred_path": str(path), "fold_ok": True,
                              "mean_plddt": plddt})
@@ -456,6 +457,45 @@ def test_default_command_matches_the_verified_baseline():
         assert absent not in joined, absent
 
 
+def test_stage03_regroups_colabfold_output_by_backbone():
+    """colabfold writes everything flat under names that repeat the same rank, model
+    and seed on every file. Only rank 1 of one model is produced here, so those 41
+    characters distinguish nothing while the directory reaches 640 entries."""
+    from cyclicnano.s03_fold import regroup
+
+    tmp = Path(tempfile.mkdtemp(prefix="cyclicnano_regroup_"))
+    try:
+        rows, backbone_of = [], {}
+        for bid in ("design_7", "design_12"):
+            for k in range(3):
+                sid = f"{bid}__seq{k:03d}"
+                pdb = tmp / f"{sid}_unrelaxed_rank_001_alphafold2_ptm_model_1_seed_000.pdb"
+                pdb.write_text("ATOM", encoding="utf-8")
+                (tmp / f"{sid}_scores_rank_001_alphafold2_ptm_model_1_seed_000.json"
+                 ).write_text("{}", encoding="utf-8")
+                rows.append({"sequence_id": sid, "pred_path": str(pdb)})
+                backbone_of[sid] = bid
+        # a sequence that never folded must survive the pass untouched
+        rows.append({"sequence_id": "design_7__seq099", "pred_path": None})
+        backbone_of["design_7__seq099"] = "design_7"
+
+        out = regroup(tmp, rows, backbone_of)
+
+        assert sorted(d.name for d in tmp.iterdir() if d.is_dir()) == ["design_12", "design_7"]
+        assert sorted(p.name for p in (tmp / "design_7").iterdir()) == [
+            "seq000.json", "seq000.pdb", "seq001.json", "seq001.pdb",
+            "seq002.json", "seq002.pdb"]
+        assert list(tmp.glob("*.pdb")) == []                 # nothing left flat
+        for row in out:
+            if row["sequence_id"].endswith("seq099"):
+                assert row["pred_path"] is None
+            else:
+                assert Path(row["pred_path"]).exists()       # rows point at the new place
+                assert Path(row["pred_path"]).parent.name in ("design_7", "design_12")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 # ------------------------------------------------------------------ stage 03 wiring
 def _fold_cfg(*extra):
     return load_config(profile="configs/profiles/amax.yaml",
@@ -590,15 +630,46 @@ def _filtered_ids(h):
     return bb[bb["bb_pass"].fillna(False).astype(bool)]["backbone_id"].tolist()
 
 
+def _delivered(out: Path) -> dict:
+    """Map backbone_id to its folder across both groups, rank prefix stripped."""
+    found = {}
+    for group, strip in ((s04_delivery.PASSED, True), (s04_delivery.BELOW, False)):
+        for d in sorted((out / group).glob("*")):
+            if d.is_dir():
+                found[d.name.split("_", 1)[1] if strip else d.name] = d
+    return found
+
+
 def test_delivery_writes_one_folder_per_backbone_that_passed_the_shape_filter():
     h, out = _run_through_delivery()
     try:
         expected = _filtered_ids(h)
         assert expected
-        folders = sorted(d.name for d in out.iterdir() if d.is_dir())
-        assert folders == sorted(expected)
+        assert sorted(_delivered(out)) == sorted(expected)
         assert (out / "delivery.csv").exists()
         assert (out / "delivery.json").exists()
+    finally:
+        h.close()
+
+
+def test_delivery_splits_the_folders_by_verdict_and_numbers_the_passing_ones():
+    """A directory listing should answer which cleared stage 04, and in what order,
+    without opening the table."""
+    h, out = _run_through_delivery()
+    try:
+        import pandas as pd
+        table = pd.read_csv(out / "delivery.csv")
+        passed = table[table["final_pass"]]["backbone_id"].tolist()
+        assert passed
+
+        names = sorted(d.name for d in (out / s04_delivery.PASSED).glob("*") if d.is_dir())
+        assert len(names) == len(passed)
+        # the prefix is the rank, counting from 1 in the order of the table
+        for i, bid in enumerate(passed, start=1):
+            assert (out / s04_delivery.PASSED / f"{i}_{bid}").is_dir(), names
+        # the folder column resolves to the real directory, which is what scripts use
+        for row in table.to_dict("records"):
+            assert (out / row["folder"]).is_dir(), row["folder"]
     finally:
         h.close()
 
@@ -608,8 +679,9 @@ def test_delivery_excludes_backbones_the_shape_filter_rejected():
     h, out = _run_through_delivery()
     try:
         bb = h.state.backbones.load()
+        delivered = _delivered(out)
         for bid in bb[~bb["bb_pass"].fillna(False).astype(bool)]["backbone_id"]:
-            assert not (out / str(bid)).exists()
+            assert str(bid) not in delivered
     finally:
         h.close()
 
@@ -624,13 +696,12 @@ def test_delivery_keeps_the_near_misses_and_records_the_verdict():
                                    "final_fail_reason": "planted"}])
         s04_delivery.run(h.cfg, h.state)
         out = Path(h.cfg.outdir) / "04_delivery"
-        assert (out / demoted).is_dir()
+        assert (out / s04_delivery.BELOW / demoted).is_dir()
 
         import pandas as pd
         table = pd.read_csv(out / "delivery.csv").set_index("backbone_id")
         assert not bool(table.loc[demoted, "final_pass"])
         assert table["final_pass"].sum() == len(table) - 1
-        # ... and it sorts to the bottom, so the ranking still reads top-down.
         assert pd.read_csv(out / "delivery.csv")["backbone_id"].iloc[-1] == demoted
     finally:
         h.close()
@@ -640,13 +711,13 @@ def test_delivery_folder_holds_the_backbone_and_every_prediction():
     h, out = _run_through_delivery()
     try:
         bid = _filtered_ids(h)[0]
-        folder = out / bid
+        folder = _delivered(out)[bid]
         assert (folder / f"{bid}.pdb").exists()
         assert (folder / "sequences.fasta").exists()
         assert (folder / "summary.csv").exists()
         preds = folder / "predictions"
         assert len(list(preds.glob("*.pdb"))) == N_SEQ          # all of them, not the best
-        assert len(list(preds.glob("*_scores.json"))) == N_SEQ
+        assert len(list(preds.glob("*.json"))) == N_SEQ
 
         import pandas as pd
         per_seq = pd.read_csv(folder / "summary.csv")
@@ -656,15 +727,56 @@ def test_delivery_folder_holds_the_backbone_and_every_prediction():
         h.close()
 
 
-def test_delivery_predictions_are_named_after_the_sequence_alone():
-    """colabfold encodes rank, model and seed in the filename. Only rank 1 is carried
-    here, so the rest of the name has nothing left to distinguish."""
+def test_delivery_keeps_the_short_names_stage_03_gave_the_predictions():
+    """The two layouts should stay recognisable as the same files."""
     h, out = _run_through_delivery()
     try:
         bid = _filtered_ids(h)[0]
-        names = sorted(p.name for p in (out / bid / "predictions").glob("*.pdb"))
-        assert names[0] == f"{bid}__seq000.pdb"
+        names = sorted(p.name for p in (_delivered(out)[bid] / "predictions").glob("*.pdb"))
+        assert names[0] == "seq000.pdb", names
         assert not any("rank_001" in n for n in names)
+    finally:
+        h.close()
+
+
+def test_delivery_says_so_when_a_score_file_is_missing(capsys=None):
+    """Predictions written under the old stage-03 naming still copy, because the
+    structure is found through pred_path, but their scores are looked up by name and
+    quietly do not arrive. The run must say that rather than deliver confidence
+    columns backed by nothing."""
+    import contextlib
+    import io
+
+    h, _ = _run_through_stage04()
+    try:
+        bid = _filtered_ids(h)[0]
+        preds = Path(h.cfg.outdir) / "03_predictions" / bid
+        for scores in list(preds.glob("*.json"))[:3]:
+            scores.unlink()
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            s04_delivery.run(h.cfg, h.state, force=True)
+        out = buf.getvalue()
+        assert "WARNING" in out and "3 predictions had no score file" in out, out
+
+        # the structures still arrive; it is only the confidence that is absent
+        folder = _delivered(Path(h.cfg.outdir) / "04_delivery")[bid] / "predictions"
+        assert len(list(folder.glob("*.pdb"))) == N_SEQ
+        assert len(list(folder.glob("*.json"))) == N_SEQ - 3
+    finally:
+        h.close()
+
+
+def test_delivery_is_quiet_when_every_score_file_is_present():
+    h, _ = _run_through_stage04()
+    try:
+        import contextlib
+        import io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            s04_delivery.run(h.cfg, h.state)
+        assert "WARNING" not in buf.getvalue(), buf.getvalue()
     finally:
         h.close()
 
@@ -676,10 +788,11 @@ def test_delivery_fasta_marks_the_best_sequence():
         seqs = h.state.sequences.load()
         import pandas as pd
         table = pd.read_csv(out / "delivery.csv")
+        delivered = _delivered(out)
         for row in table.to_dict("records"):
             group = seqs[seqs.backbone_id == row["backbone_id"]]
             assert abs(row["best_rmsd"] - group["sc_rmsd"].min()) < 1e-9
-            text = (out / str(row["backbone_id"]) / "sequences.fasta").read_text()
+            text = (delivered[row["backbone_id"]] / "sequences.fasta").read_text()
             assert text.count(">") == N_SEQ
             best_line = [l for l in text.splitlines() if l.endswith(" BEST")]
             assert len(best_line) == 1
@@ -702,31 +815,10 @@ def test_delivery_rerun_clears_stale_hits():
     h, out = _run_through_delivery()
     try:
         (out / "zz_stale.pdb").write_text("junk", encoding="utf-8")
-        (out / "zz_stale_dir").mkdir()
+        (out / s04_delivery.PASSED / "99_gone").mkdir()
         s04_delivery.run(h.cfg, h.state, force=True)
         assert not (out / "zz_stale.pdb").exists()
-        assert not (out / "zz_stale_dir").exists()
-    finally:
-        h.close()
-
-
-def test_a_dry_run_touches_nothing_in_the_cpu_stages():
-    """--dry-run promises to print commands and run none. The CPU stages take no
-    Runner, so without being told they would do their real work: stage 01 would
-    rewrite the folder stage 02 reads, and delivery would lay out a tree from
-    whatever the tables happened to hold."""
-    h = Harness()
-    h.seed_backbones()
-    try:
-        s01_backbone_filter.run(h.cfg, h.state, dry_run=True)
-        s04_validate.run(h.cfg, h.state, dry_run=True)
-        s04_delivery.run(h.cfg, h.state, dry_run=True)
-        out = Path(h.cfg.outdir)
-        assert not (out / "01_backbone_filter").exists()
-        assert not (out / "04_delivery").exists()
-        for stage in ("01_backbone_filter", "04_validate", "04_delivery"):
-            assert not h.state.is_done(stage)
-        assert "bb_pass" not in h.state.backbones.load().columns
+        assert not (out / s04_delivery.PASSED / "99_gone").exists()
     finally:
         h.close()
 

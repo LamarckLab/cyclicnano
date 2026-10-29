@@ -9,8 +9,14 @@ and the ranking puts the ones that passed on top.
 
 Each folder holds the design backbone, every sequence written for it, and the
 prediction and score file for each of those sequences. Nothing here is new: it is the
-flat output of stages 02 and 03 regrouped by backbone, under short names, so that one
-candidate can be looked at without cross-referencing three directories.
+output of stages 02 and 03 regrouped by candidate, so that one can be looked at
+without cross-referencing three directories.
+
+The folders are split into passed/ and below_cutoff/, and the passing ones carry
+their rank as a prefix, so a directory listing answers which cleared stage 04 and in
+what order without opening the table. The cost is that a folder name encodes a
+verdict: rerunning with a different cutoff renames things, and a path written down
+elsewhere can go stale.
 """
 from __future__ import annotations
 
@@ -24,6 +30,8 @@ from .config import Config
 from .manifest import RunState
 
 STAGE = "04_delivery"
+PASSED = "passed"          # cleared the stage-04 cutoffs
+BELOW = "below_cutoff"     # kept and flagged, not discarded
 
 
 def _f(value, spec: str = ".2f", missing: str = "na") -> str:
@@ -42,28 +50,29 @@ def best_sequence(sequences: pd.DataFrame, backbone_id: str) -> dict | None:
     return group.nsmallest(1, "sc_rmsd").iloc[0].to_dict() if len(group) else None
 
 
-def _copy_predictions(group: list[dict], dest: Path) -> int:
-    """Copy each sequence prediction and its scores under the sequence id alone.
+def _copy_predictions(group: list[dict], dest: Path) -> tuple[int, int]:
+    """Copy each sequence prediction and its scores, keeping the stage-03 names.
 
-    colabfold names a file after the rank, model and seed as well, which is the right
-    thing for a directory holding every model of every sequence and the wrong thing
-    for a folder holding one backbone. Only the rank-1 model is carried, so the rest
-    of the name has nothing left to distinguish.
+    Stage 03 has already reduced these to seqNNN.pdb and seqNNN.json inside a folder
+    named for the backbone. The delivery folder is named for the backbone too, so the
+    same short names carry here unchanged and the two layouts stay recognisable as
+    the same files.
     """
-    n = 0
+    n = missing = 0
     for row in group:
         pred = row.get("pred_path")
         if not pred or not Path(str(pred)).exists():
             continue
         src = Path(str(pred))
         dest.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dest / f"{row['sequence_id']}.pdb")
+        shutil.copy2(src, dest / src.name)
         n += 1
-        # The score file sits beside the structure under a parallel name.
-        scores = sorted(src.parent.glob(f"{row['sequence_id']}_scores_rank_001_*.json"))
-        if scores:
-            shutil.copy2(scores[0], dest / f"{row['sequence_id']}_scores.json")
-    return n
+        scores = src.with_suffix(".json")                   # written beside it by stage 03
+        if scores.exists():
+            shutil.copy2(scores, dest / scores.name)
+        else:
+            missing += 1
+    return n, missing
 
 
 def _write_fasta(group: list[dict], best_id: str | None, path: Path) -> None:
@@ -107,10 +116,18 @@ def run(cfg: Config, state: RunState, force: bool = False, dry_run: bool = False
         ["final_pass", "success_rate", "best_rmsd"], ascending=[False, False, True])
 
     extra = [c for c in backbones.columns if c.startswith("success_rate_at_")]
-    rows = []
+    rows, rank, missing_scores = [], 0, 0
     for record in delivered.to_dict("records"):
         bid = record["backbone_id"]
-        folder = outdir / str(bid)
+        # Grouped and numbered so that the verdict and the ranking are visible from a
+        # directory listing. The near misses keep their own folder rather than being
+        # dropped; what they lose is only the top of the list.
+        if bool(record.get("final_pass")):
+            rank += 1
+            rel = Path(PASSED) / f"{rank}_{bid}"
+        else:
+            rel = Path(BELOW) / str(bid)
+        folder = outdir / rel
         folder.mkdir(parents=True, exist_ok=True)
 
         source = Path(str(record["backbone_path"]))
@@ -121,7 +138,8 @@ def run(cfg: Config, state: RunState, force: bool = False, dry_run: bool = False
         best = best_sequence(sequences, bid)
         best_id = best["sequence_id"] if best else None
 
-        n_pred = _copy_predictions(group, folder / "predictions")
+        n_pred, n_missing = _copy_predictions(group, folder / "predictions")
+        missing_scores += n_missing
         if group:
             _write_fasta(group, best_id, folder / "sequences.fasta")
             cols = [c for c in _SEQ_COLUMNS if c in sequences.columns]
@@ -130,7 +148,7 @@ def run(cfg: Config, state: RunState, force: bool = False, dry_run: bool = False
 
         rows.append({
             "backbone_id": bid,
-            "folder": str(bid),
+            "folder": rel.as_posix(),
             "symmetry": record.get("symmetry"),
             "n_res_monomer": record.get("n_res_monomer"),
             "n_helices": record.get("n_helices"),
@@ -156,6 +174,15 @@ def run(cfg: Config, state: RunState, force: bool = False, dry_run: bool = False
                     "n_final_pass": sum(1 for r in rows if r["final_pass"]),
                     "backbones": rows}, indent=2, default=str),
         encoding="utf-8")
+
+    # A structure whose scores file is absent is delivered without its confidence, and
+    # nothing downstream notices. It means the predictions were written by a different
+    # version of stage 03 than the one naming them now, which is a migration left half
+    # done rather than a missing file, so it is said out loud rather than raised.
+    if missing_scores:
+        print(f"[{STAGE}] WARNING: {missing_scores} predictions had no score file beside "
+              f"them. The stage-03 output predates the current naming; re-run stage 03 "
+              f"or migrate it before trusting the confidence columns.")
 
     n_pass = sum(1 for r in rows if r["final_pass"])
     print(f"[{STAGE}] {len(rows)} backbones delivered to {outdir} "

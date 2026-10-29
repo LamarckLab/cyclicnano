@@ -3,6 +3,10 @@
 Per protocol only the monomer is predicted. MSA mode is forced to single_sequence:
 a de novo design has no homologues, so a search either returns nothing or returns
 unrelated hits, and in both cases the resulting confidence is not meaningful.
+
+The stage leaves one folder per backbone holding two files per sequence,
+seqNNN.pdb and seqNNN.json, rather than the flat directory of long names colabfold
+writes.
 """
 from __future__ import annotations
 
@@ -14,7 +18,6 @@ from .manifest import RunState
 from .runner import Runner
 
 STAGE = "03_predictions"
-
 
 def write_fasta(rows: list[dict], path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -76,6 +79,36 @@ def collect(outdir: Path, sequence_id: str) -> dict:
     return row
 
 
+def regroup(work: Path, rows: list[dict], backbone_of: dict) -> list[dict]:
+    """Move each rank-1 prediction and its scores into a folder named for its backbone.
+
+    colabfold names every file after the rank, the model and the seed as well as the
+    sequence. Only rank 1 of a single model is ever produced here, so those 41
+    characters are identical on all of them and distinguish nothing, while the flat
+    directory reaches 640 entries on a 16-backbone run. One folder per backbone with
+    the sequence index as the name says everything the long form did.
+
+    Returns the rows with pred_path pointing at the new location.
+    """
+    out = []
+    for row in rows:
+        sid, pred = row["sequence_id"], row.get("pred_path")
+        bid = backbone_of.get(sid)
+        if not bid or not pred or not Path(str(pred)).exists():
+            out.append(row)
+            continue
+        src = Path(str(pred))
+        short = sid.split("__", 1)[1] if "__" in sid else sid
+        dest = work / str(bid)
+        dest.mkdir(parents=True, exist_ok=True)
+        new_pdb = dest / f"{short}.pdb"
+        src.replace(new_pdb)
+        for scores in sorted(src.parent.glob(f"{sid}_scores_rank_001_*.json")):
+            scores.replace(dest / f"{short}.json")
+        out.append({**row, "pred_path": str(new_pdb)})
+    return out
+
+
 def run(cfg: Config, state: RunState, runner: Runner, force: bool = False) -> list[dict]:
     if state.is_done(STAGE) and not force:
         print(f"[{STAGE}] already done, skipping")
@@ -102,21 +135,17 @@ def run(cfg: Config, state: RunState, runner: Runner, force: bool = False) -> li
     runner.run("colabfold", build_command(cfg, fasta, work))
 
     rows = [{"sequence_id": r["sequence_id"], **collect(work, r["sequence_id"])} for r in records]
-    state.sequences.upsert(rows)
 
     # colabfold_batch writes eight files per sequence; two are read downstream. The
     # rest are plots, the single-sequence a3m and PAE dumps, and they go. The two
     # run-level files it leaves in the output directory, its resolved config and the
-    # citation list, are provenance rather than results and move to logs/, so the
-    # stage directory ends up holding one structure and one score file per sequence
-    # and nothing else.
+    # citation list, are provenance rather than results and move to logs/.
     if not cfg.get("fold.keep_all_outputs", False):
-        keep = {Path(r["pred_path"]).name for r in rows if r.get("pred_path")}
-        keep |= {p.name for p in work.glob("*_scores_rank_001_*.json")}
+        rows = regroup(work, rows, {r["sequence_id"]: r.get("backbone_id") for r in records})
         archive = logs / "colabfold"
         removed = 0
         for path in work.iterdir():
-            if not path.is_file() or path.name in keep:
+            if not path.is_file():                          # the regrouped folders stay
                 continue
             if path.name in ("config.json", "cite.bibtex"):
                 archive.mkdir(parents=True, exist_ok=True)
@@ -125,6 +154,7 @@ def run(cfg: Config, state: RunState, runner: Runner, force: bool = False) -> li
                 path.unlink()
                 removed += 1
         print(f"[{STAGE}] removed {removed} unused colabfold products")
+    state.sequences.upsert(rows)
     if not runner.dry_run:                                   # a dry run must leave no trace
         state.mark_done(STAGE)
     n_ok = sum(1 for r in rows if r.get("fold_ok"))
