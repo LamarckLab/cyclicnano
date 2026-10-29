@@ -69,7 +69,14 @@ class Table:
             for col in new.columns:
                 if col not in merged.columns:
                     merged[col] = pd.NA
-                merged.loc[new.index, col] = new[col].values
+                values = new[col]
+                # None is not assignable into a float column on pandas 2; it raises
+                # rather than treating it as missing. A stage writes None for a value
+                # it could not compute, so a re-run after a prediction went missing
+                # crashed here. NaN means the same thing and keeps the column numeric.
+                if values.isna().any() and pd.api.types.is_numeric_dtype(merged[col].dtype):
+                    values = pd.to_numeric(values, errors="coerce")
+                merged.loc[new.index, col] = values.values
         self.save(merged.reset_index())
         return self.load()
 

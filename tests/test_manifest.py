@@ -85,3 +85,22 @@ def test_tables_are_independent():
     state.sequences.upsert([{"sequence_id": "a__seq000", "backbone_id": "a"}])
     assert len(state.backbones.load()) == 1
     assert len(state.sequences.load()) == 1
+
+
+def test_upsert_accepts_none_into_an_existing_numeric_column():
+    """A stage writes None for a value it could not compute. On pandas 2 that is not
+    assignable into a float column: it raises rather than reading as missing, so a
+    re-run after a prediction had gone missing crashed in the manifest instead of
+    recording the gap. NaN means the same thing and keeps the column numeric."""
+    import pandas as pd
+
+    table = _state().backbones
+    table.upsert([{"backbone_id": "a", "score": 1.5},
+                  {"backbone_id": "b", "score": 2.5}])
+    assert table.load()["score"].dtype.kind == "f"
+
+    table.upsert([{"backbone_id": "a", "score": None}])
+    df = table.load().set_index("backbone_id")
+    assert pd.isna(df.loc["a", "score"])
+    assert df.loc["b", "score"] == 2.5                  # the other row is untouched
+    assert df["score"].dtype.kind == "f"                # still numeric, not object
