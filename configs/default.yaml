@@ -133,7 +133,19 @@ validate:
   also_record: [1.5, 2.0]     # extra cutoffs stored for later re-analysis
   rules:
     - "success_rate >= 0.3"   # a backbone passes if >=30% of its sequences fold back
-    - "best_rmsd <= 1.0"
+
+  # A `best_rmsd <= 1.0` rule used to sit here and was removed as dead. It could never
+  # reject anything: a sequence passes only if its RMSD is at or below rmsd_cutoff, so
+  # any backbone with a non-zero success rate already has its minimum below that, and
+  # the rule restated the cutoff above under another name. On 16 C5 and 45 C3 backbones
+  # it rejected none; on C3 it would have admitted 36 where the success rate admitted 27.
+  #
+  # It was not harmless, because it only looked redundant while the two numbers agreed.
+  # Raising rmsd_cutoff to the 2.0 the literature usually uses would have turned it into
+  # a real and quite different constraint, 30 percent within 2.0 A and the best within
+  # 1.0 A, without anyone deciding that. If you want that constraint, write it with a
+  # threshold of its own and say what the number is for; do not let it track rmsd_cutoff
+  # by accident.
 
 # ------------------------------------------------- execution
 compute:

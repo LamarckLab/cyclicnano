@@ -207,7 +207,7 @@ the count, and the backbones it admits carry noticeably more loop; the rule stay
 zero on that inspection.
 
 **Stage 04, self-consistency.** `rmsd_cutoff: 1.0`, `plddt_cutoff: 80`,
-`success_rate >= 0.3` and `best_rmsd <= 1.0` are **not calibrated against anything**.
+`success_rate >= 0.3` is **not calibrated against anything**.
 They are reasonable and deliberately strict, since the literature usually calls a
 design self-consistent at 2.0 angstrom, but no measurement or experimental outcome
 sets them. Treat them as a starting point.

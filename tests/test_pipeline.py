@@ -207,6 +207,33 @@ def test_stage04_recovers_the_planted_success_rate():
         h.close()
 
 
+def test_a_nonzero_success_rate_already_bounds_the_best_rmsd():
+    """Why the shipped validate rules carry no best_rmsd threshold.
+
+    A sequence passes only when its RMSD is at or below validate.rmsd_cutoff, so the
+    minimum across a backbone is below that as soon as one sequence passes, and a rule
+    restating the cutoff can reject nothing. Measured on real output it rejected none
+    of 16 C5 and none of 45 C3 backbones, and on C3 it would have admitted 36 where
+    the success rate admitted 27.
+
+    The redundancy is invisible while the two numbers agree, which is the reason this
+    is a test and not a comment: raising rmsd_cutoff would turn such a rule into a real
+    and quite different constraint without anyone deciding that.
+    """
+    h, _ = _run_through_stage04()
+    try:
+        cutoff = float(h.cfg.get("validate.rmsd_cutoff"))
+        bb = h.state.backbones.load()
+        scored = bb[bb["success_rate"].notna() & (bb["success_rate"] > 0)]
+        assert len(scored), "the harness produced no scored backbone"
+        assert (scored["best_rmsd"] <= cutoff).all(), scored[["backbone_id", "best_rmsd"]]
+
+        shipped = load_config().get("validate.rules", []) or []
+        assert not any("best_rmsd" in rule for rule in shipped), shipped
+    finally:
+        h.close()
+
+
 def test_stage04_writes_no_directory_of_its_own():
     """Validation only adds columns. A second ranking file beside the delivery table
     would be the same numbers under another name, free to disagree with it."""
