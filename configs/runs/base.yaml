@@ -67,8 +67,11 @@ generate:
   # Diversity cost at 0.5 is small: median pairwise CA RMSD unchanged at 10.6 A, and
   # near-duplicate pairs below 2 A went 1 -> 3 out of 780. At 0.0 it is 9.
   #
-  # The C3 results on disk predate this and were generated at 1.0; each run records
-  # what it actually used in logs/resolved_config.yaml.
+  # The figures above are from C5. Both symmetries on disk were generated with this
+  # setting, in the same pair of runs; an earlier version of this note claimed the C3
+  # results predated it, which stopped being true when C3 was regenerated. Each run
+  # records what it actually used in logs/resolved_config.yaml, which is the thing to
+  # check rather than a comment.
   noise_scale: 0.5
 
 design:
