@@ -28,6 +28,8 @@ import pandas as pd
 
 from .config import Config
 from .manifest import RunState
+from .s00_generate import backbone_filename
+from .s03_fold import scores_path_for
 
 STAGE = "04_delivery"
 PASSED = "passed"          # cleared the stage-04 cutoffs
@@ -53,8 +55,8 @@ def best_sequence(sequences: pd.DataFrame, backbone_id: str) -> dict | None:
 def _copy_predictions(group: list[dict], dest: Path) -> tuple[int, int]:
     """Copy each sequence prediction and its scores, keeping the stage-03 names.
 
-    Stage 03 has already reduced these to seqNNN.pdb and seqNNN.json inside a folder
-    named for the backbone. The delivery folder is named for the backbone too, so the
+    Stage 03 has already reduced these to seqNNN_af2.pdb and seqNNN_af2_scores.json
+    inside a folder named for the backbone. The delivery folder is named for the backbone too, so the
     same short names carry here unchanged and the two layouts stay recognisable as
     the same files.
     """
@@ -67,7 +69,7 @@ def _copy_predictions(group: list[dict], dest: Path) -> tuple[int, int]:
         dest.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dest / src.name)
         n += 1
-        scores = src.with_suffix(".json")                   # written beside it by stage 03
+        scores = scores_path_for(src)                       # named by stage 03, not guessed
         if scores.exists():
             shutil.copy2(scores, dest / scores.name)
         else:
@@ -132,7 +134,7 @@ def run(cfg: Config, state: RunState, force: bool = False, dry_run: bool = False
 
         source = Path(str(record["backbone_path"]))
         if source.exists():
-            shutil.copy2(source, folder / f"{bid}.pdb")
+            shutil.copy2(source, folder / backbone_filename(bid))
 
         group = sequences[sequences["backbone_id"] == bid].to_dict("records")
         best = best_sequence(sequences, bid)

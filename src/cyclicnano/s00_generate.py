@@ -20,6 +20,32 @@ from .runner import Runner
 
 STAGE = "00_backbones"
 
+# What a design backbone is called on disk, and how to get the id back out of it.
+# RFdiffusion writes design_N.pdb; the suffix is added afterwards so that a structure
+# says what kind of structure it is when it sits beside an AlphaFold prediction. The
+# id stays design_N, so nothing downstream has to know about the suffix except the
+# three places that read or write these files, and they all come here for it.
+#
+# Abbreviated rather than spelled out: the directories already say backbone twice over,
+# and these names sit next to seq000_af2.pdb, where an eleven-character tag on one of
+# the pair and four on the other reads lopsided.
+BACKBONE_TAG = "_bb"
+BACKBONE_SUFFIX = f"{BACKBONE_TAG}.pdb"
+
+
+def backbone_filename(backbone_id: str) -> str:
+    return f"{backbone_id}{BACKBONE_SUFFIX}"
+
+
+def backbone_id_from(path: Path | str) -> str:
+    """The id of a backbone file, tagged or not, whatever its extension.
+
+    ProteinMPNN names its FASTA after the PDB it read, so the tag arrives on a .fa as
+    well as on a .pdb and has to come off both.
+    """
+    stem = Path(path).stem
+    return stem[:-len(BACKBONE_TAG)] if stem.endswith(BACKBONE_TAG) else stem
+
 
 def _num(value) -> str:
     """Format 1.0 as 1 and 0.1 as 0.1, matching how the flags are written by hand."""
@@ -151,10 +177,16 @@ def run(cfg: Config, state: RunState, runner: Runner, force: bool = False) -> li
     if traj.is_dir() and not cfg.get("generate.write_trajectory", False):
         shutil.rmtree(traj, ignore_errors=True)
 
+    # RFdiffusion has no say in the name past the prefix, so the suffix goes on here.
+    # Already-suffixed files are left alone, which is what makes a resumed run safe.
+    for raw in sorted(outdir.glob("*.pdb")):
+        if not raw.name.endswith(BACKBONE_SUFFIX):
+            raw.replace(outdir / backbone_filename(raw.stem))
+
     rows = []
     for path in sorted(outdir.glob("*.pdb")):
         rows.append({
-            "backbone_id": path.stem,
+            "backbone_id": backbone_id_from(path),
             "backbone_path": str(path),
             "symmetry": cfg.symmetry,
             "monomer_length_requested": cfg.monomer_length,

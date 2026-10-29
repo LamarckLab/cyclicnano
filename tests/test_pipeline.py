@@ -16,11 +16,12 @@ from pathlib import Path
 
 import numpy as np
 
-from cyclicnano import s01_backbone_filter, s04_delivery, s04_validate
+from cyclicnano import s01_backbone_filter, s03_fold, s04_delivery, s04_validate
 from cyclicnano.config import load_config, parse_overrides
 from cyclicnano.manifest import RunState
 from cyclicnano.pdbio import extract_monomer, read_pdb, write_pdb
 from cyclicnano.runner import Runner
+from cyclicnano import s00_generate
 from cyclicnano.s00_generate import build_command
 from cyclicnano.s02_design import build_commands, parse_fasta
 from cyclicnano.s03_fold import build_command as fold_command
@@ -48,13 +49,15 @@ class Harness:
         outdir = self.state.stage_dir("00_backbones")
         rows = []
         for i in range(N_GOOD):
-            p = outdir / f"good_{i:03d}.pdb"
+            p = outdir / s00_generate.backbone_filename(f"good_{i:03d}")
             write_pdb(str(p), cyclic_oligomer(n_sym=5, ring_radius=16.0 + 0.5 * i))
-            rows.append({"backbone_id": p.stem, "backbone_path": str(p), "symmetry": "C5"})
+            rows.append({"backbone_id": s00_generate.backbone_id_from(p),
+                         "backbone_path": str(p), "symmetry": "C5"})
         for i in range(N_BAD):
-            p = outdir / f"clash_{i:03d}.pdb"
+            p = outdir / s00_generate.backbone_filename(f"clash_{i:03d}")
             write_pdb(str(p), clashing_oligomer(n_sym=5))
-            rows.append({"backbone_id": p.stem, "backbone_path": str(p), "symmetry": "C5"})
+            rows.append({"backbone_id": s00_generate.backbone_id_from(p),
+                         "backbone_path": str(p), "symmetry": "C5"})
         self.state.backbones.upsert(rows)
         self.state.mark_done("00_backbones")
 
@@ -78,10 +81,10 @@ class Harness:
                 # files per sequence, the scores beside the structure.
                 folder = preddir / bid
                 folder.mkdir(parents=True, exist_ok=True)
-                path = folder / f"seq{k:03d}.pdb"
+                path = folder / f"seq{k:03d}{s03_fold.PRED_SUFFIX}"
                 write_pdb(str(path), pred)
                 plddt = 92.0 if good else 60.0
-                (folder / f"seq{k:03d}.json").write_text(
+                s03_fold.scores_path_for(path).write_text(
                     json.dumps({"plddt": [plddt] * 60, "ptm": 0.8}), encoding="utf-8")
                 rows.append({"sequence_id": sid, "backbone_id": bid, "seq_index": k,
                              "sequence": "A" * 60, "pred_path": str(path), "fold_ok": True,
@@ -146,13 +149,41 @@ def test_stage01_writes_a_filter_summary():
         h.close()
 
 
+def test_a_backbone_file_says_it_is_a_backbone_at_every_stage():
+    """The id stays design_N; only the file carries the tag, so that a structure sitting
+    beside an AlphaFold prediction says which of the two it is. The round trip through
+    ProteinMPNN is the part that can go wrong: it names its FASTA after the PDB it read,
+    so the tag would otherwise ride into every sequence id."""
+    from cyclicnano.s00_generate import BACKBONE_TAG, backbone_filename, backbone_id_from
+
+    assert backbone_filename("design_27") == "design_27_bb.pdb"
+    assert backbone_id_from("design_27_bb.pdb") == "design_27"
+    assert backbone_id_from(Path("/x/design_27_bb.fa")) == "design_27"   # ProteinMPNN
+    assert backbone_id_from("design_27.pdb") == "design_27"                    # untagged
+    assert BACKBONE_TAG in backbone_filename("design_27")
+
+    h = Harness()
+    h.seed_backbones()
+    try:
+        s01_backbone_filter.run(h.cfg, h.state)
+        staged = s01_backbone_filter.passed_dir(h.state)
+        names = sorted(p.name for p in staged.glob("*.pdb"))
+        assert names and all(n.endswith("_bb.pdb") for n in names), names
+        # the ids in the table are untagged
+        bb = h.state.backbones.load()
+        ids = bb["backbone_id"].tolist()
+        assert not any(str(b).endswith(BACKBONE_TAG) for b in ids), ids
+    finally:
+        h.close()
+
+
 def test_stage01_copies_the_survivors_into_their_own_folder():
     h = Harness()
     h.seed_backbones()
     try:
         s01_backbone_filter.run(h.cfg, h.state)
         staged = s01_backbone_filter.passed_dir(h.state)
-        names = sorted(p.stem for p in staged.glob("*.pdb"))
+        names = sorted(s00_generate.backbone_id_from(p) for p in staged.glob("*.pdb"))
         assert names == sorted(h.state.backbones.load()
                                .query("bb_pass")["backbone_id"].tolist())
         assert len(names) == N_GOOD
@@ -175,6 +206,22 @@ def test_stage01_rebuilds_the_survivor_folder_when_the_rules_tighten():
         assert list(staged.glob("*.pdb")) == []
     finally:
         h.close()
+
+
+def test_sequence_files_say_what_made_them_and_what_they_hold():
+    """ProteinMPNN names its FASTA after the PDB it read, so the file lands as
+    design_N_bb.fa. Left alone the backbone tag would ride into every sequence
+    id; the rename swaps it for the one describing the file, and the id is unchanged
+    on both sides."""
+    from cyclicnano.s02_design import (SEQ_TAG, backbone_id_from_fasta,
+                                       sequences_filename)
+
+    assert sequences_filename("design_27") == "design_27_mpnn_seqs.fa"
+    assert backbone_id_from_fasta("design_27_mpnn_seqs.fa") == "design_27"
+    # ProteinMPNN's own output name, before the rename
+    assert backbone_id_from_fasta("design_27_bb.fa") == "design_27"
+    assert backbone_id_from_fasta(Path("/x/design_27.fa")) == "design_27"
+    assert "mpnn" in SEQ_TAG
 
 
 def test_stage02_refuses_to_run_without_the_survivor_folder():
@@ -483,8 +530,9 @@ def test_stage03_regroups_colabfold_output_by_backbone():
 
         assert sorted(d.name for d in tmp.iterdir() if d.is_dir()) == ["design_12", "design_7"]
         assert sorted(p.name for p in (tmp / "design_7").iterdir()) == [
-            "seq000.json", "seq000.pdb", "seq001.json", "seq001.pdb",
-            "seq002.json", "seq002.pdb"]
+            "seq000_af2.pdb", "seq000_af2_scores.json",
+            "seq001_af2.pdb", "seq001_af2_scores.json",
+            "seq002_af2.pdb", "seq002_af2_scores.json"]
         assert list(tmp.glob("*.pdb")) == []                 # nothing left flat
         for row in out:
             if row["sequence_id"].endswith("seq099"):
@@ -712,12 +760,12 @@ def test_delivery_folder_holds_the_backbone_and_every_prediction():
     try:
         bid = _filtered_ids(h)[0]
         folder = _delivered(out)[bid]
-        assert (folder / f"{bid}.pdb").exists()
+        assert (folder / s00_generate.backbone_filename(bid)).exists()
         assert (folder / "sequences.fasta").exists()
         assert (folder / "summary.csv").exists()
         preds = folder / "predictions"
         assert len(list(preds.glob("*.pdb"))) == N_SEQ          # all of them, not the best
-        assert len(list(preds.glob("*.json"))) == N_SEQ
+        assert len(list(preds.glob("*_af2_scores.json"))) == N_SEQ
 
         import pandas as pd
         per_seq = pd.read_csv(folder / "summary.csv")
@@ -727,14 +775,19 @@ def test_delivery_folder_holds_the_backbone_and_every_prediction():
         h.close()
 
 
-def test_delivery_keeps_the_short_names_stage_03_gave_the_predictions():
-    """The two layouts should stay recognisable as the same files."""
+def test_delivery_keeps_the_names_stage_03_gave_the_predictions():
+    """The two layouts should stay recognisable as the same files, and a structure
+    carried out of either one should still say what produced it."""
     h, out = _run_through_delivery()
     try:
         bid = _filtered_ids(h)[0]
-        names = sorted(p.name for p in (_delivered(out)[bid] / "predictions").glob("*.pdb"))
-        assert names[0] == "seq000.pdb", names
+        preds = _delivered(out)[bid] / "predictions"
+        names = sorted(p.name for p in preds.glob("*.pdb"))
+        assert names[0] == f"seq000{s03_fold.PRED_SUFFIX}", names
+        assert all("af2" in n for n in names)
         assert not any("rank_001" in n for n in names)
+        # and the score file is found through the stage-03 helper, not by guesswork
+        assert s03_fold.scores_path_for(preds / names[0]).exists()
     finally:
         h.close()
 
@@ -751,7 +804,7 @@ def test_delivery_says_so_when_a_score_file_is_missing(capsys=None):
     try:
         bid = _filtered_ids(h)[0]
         preds = Path(h.cfg.outdir) / "03_predictions" / bid
-        for scores in list(preds.glob("*.json"))[:3]:
+        for scores in list(preds.glob("*_af2_scores.json"))[:3]:
             scores.unlink()
 
         buf = io.StringIO()
@@ -763,7 +816,7 @@ def test_delivery_says_so_when_a_score_file_is_missing(capsys=None):
         # the structures still arrive; it is only the confidence that is absent
         folder = _delivered(Path(h.cfg.outdir) / "04_delivery")[bid] / "predictions"
         assert len(list(folder.glob("*.pdb"))) == N_SEQ
-        assert len(list(folder.glob("*.json"))) == N_SEQ - 3
+        assert len(list(folder.glob("*_af2_scores.json"))) == N_SEQ - 3
     finally:
         h.close()
 

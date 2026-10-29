@@ -5,8 +5,9 @@ a de novo design has no homologues, so a search either returns nothing or return
 unrelated hits, and in both cases the resulting confidence is not meaningful.
 
 The stage leaves one folder per backbone holding two files per sequence,
-seqNNN.pdb and seqNNN.json, rather than the flat directory of long names colabfold
-writes.
+seqNNN_af2.pdb and seqNNN_af2_scores.json, rather than the flat directory of long
+names colabfold writes. The tool is named in the file rather than only in the stage
+directory, so a structure stays identifiable once it is moved or sent on.
 """
 from __future__ import annotations
 
@@ -18,6 +19,20 @@ from .manifest import RunState
 from .runner import Runner
 
 STAGE = "03_predictions"
+
+# The names this stage gives its two products. Defined here and imported by the
+# delivery stage rather than spelled out twice: the two have drifted apart before,
+# and a mismatch is silent, costing only the score file nobody notices is missing.
+PRED_SUFFIX = "_af2.pdb"
+SCORES_SUFFIX = "_af2_scores.json"
+
+
+def scores_path_for(prediction: Path) -> Path:
+    """The score file this stage writes beside a prediction."""
+    name = prediction.name
+    stem = name[:-len(PRED_SUFFIX)] if name.endswith(PRED_SUFFIX) else prediction.stem
+    return prediction.parent / f"{stem}{SCORES_SUFFIX}"
+
 
 def write_fasta(rows: list[dict], path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -101,10 +116,10 @@ def regroup(work: Path, rows: list[dict], backbone_of: dict) -> list[dict]:
         short = sid.split("__", 1)[1] if "__" in sid else sid
         dest = work / str(bid)
         dest.mkdir(parents=True, exist_ok=True)
-        new_pdb = dest / f"{short}.pdb"
+        new_pdb = dest / f"{short}{PRED_SUFFIX}"
         src.replace(new_pdb)
         for scores in sorted(src.parent.glob(f"{sid}_scores_rank_001_*.json")):
-            scores.replace(dest / f"{short}.json")
+            scores.replace(scores_path_for(new_pdb))
         out.append({**row, "pred_path": str(new_pdb)})
     return out
 

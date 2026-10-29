@@ -135,7 +135,7 @@ runs/<name>/
 ├── 01_backbone_filter/
 │   ├── filter_summary.json  the rules, and the rejection count of each
 │   └── passed/              the backbones that survived; stage 02 reads this
-├── 02_sequences/            one ProteinMPNN FASTA per backbone
+├── 02_sequences/            design_N_mpnn_seqs.fa, one per backbone
 ├── 03_predictions/          two files per sequence: AlphaFold2 PDB and scores
 ├── 04_delivery/
 │   ├── delivery.csv         one row per backbone: success rate, best RMSD, verdict

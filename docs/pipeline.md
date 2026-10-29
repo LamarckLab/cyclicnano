@@ -76,7 +76,7 @@ run is reproducible against another run with the same input set; `success_rate` 
 therefore a property of the backbone *and* the batch it was designed in, not of the
 backbone alone, and small differences in it should not be read as real.
 
-Output: `02_sequences/*.fa`, one FASTA per backbone, and one row per designed
+Output: `02_sequences/design_N_mpnn_seqs.fa`, one per backbone, and one row per designed
 sequence in `tables/sequences.csv`. ProteinMPNN writes into a `seqs/` subdirectory;
 the stage lifts the files out of it and removes it, and the jsonl intermediates go to
 `logs/`, so the stage directory holds FASTA files and nothing else.

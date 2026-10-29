@@ -6,7 +6,8 @@ homo-oligomer at all, so the config value is asserted rather than trusted.
 
 The input is the `passed/` folder written by stage 01, not the manifest: ProteinMPNN
 takes a directory, and keeping the selection in one place means there is no second
-copy to fall out of step. The stage directory is left holding the FASTA files and
+copy to fall out of step. Output is one FASTA per backbone named design_N_mpnn_seqs.fa,
+so a sequence file says what produced it and what it holds. The stage directory is left holding the FASTA files and
 nothing else -- the jsonl intermediates go to `logs/`, and the `seqs/` level that
 ProteinMPNN insists on is flattened away once the files have been read.
 """
@@ -18,9 +19,26 @@ from pathlib import Path
 from .config import Config
 from .manifest import RunState
 from .runner import Runner
+from .s00_generate import backbone_id_from
 from .s01_backbone_filter import passed_dir
 
 STAGE = "02_sequences"
+
+# ProteinMPNN names its output after the PDB it read, so the file arrives as
+# design_N_bb.fa and would carry the backbone tag into every sequence id. It is
+# renamed on the way out of seqs/, trading one tag for the one that describes what the
+# file actually holds. Both ends of that trade live here so they cannot drift.
+SEQ_TAG = "_mpnn_seqs"
+
+
+def sequences_filename(backbone_id: str) -> str:
+    return f"{backbone_id}{SEQ_TAG}.fa"
+
+
+def backbone_id_from_fasta(path: Path | str) -> str:
+    """The backbone a FASTA belongs to, whether it is ours or ProteinMPNN's raw output."""
+    stem = Path(path).stem
+    return stem[:-len(SEQ_TAG)] if stem.endswith(SEQ_TAG) else backbone_id_from(path)
 
 
 def _mpnn(cfg: Config, script: str) -> str:
@@ -137,15 +155,18 @@ def run(cfg: Config, state: RunState, runner: Runner, force: bool = False) -> li
 
     # ProteinMPNN always writes into <out_folder>/seqs. Lifting the FASTA files one
     # level up leaves the stage directory flat, which is how every other stage reads.
+    # ProteinMPNN names its output after the input PDB, so the backbone suffix would
+    # ride along into the FASTA name and from there into every sequence id. It is
+    # dropped on the way up, leaving the id the same on both sides of the stage.
     seqs = work / "seqs"
     if seqs.is_dir():
         for fasta in seqs.glob("*.fa"):
-            fasta.replace(work / fasta.name)
+            fasta.replace(work / sequences_filename(backbone_id_from(fasta)))
         shutil.rmtree(seqs, ignore_errors=True)
 
     rows = []
     for fasta in sorted(work.glob("*.fa")):
-        bid = fasta.stem
+        bid = backbone_id_from_fasta(fasta)
         for entry in parse_fasta(fasta):
             rows.append({
                 "sequence_id": f"{bid}__seq{entry['seq_index']:03d}",

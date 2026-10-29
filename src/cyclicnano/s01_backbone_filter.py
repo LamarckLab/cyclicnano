@@ -22,6 +22,7 @@ from .filters import FilterSet
 from .geometry import backbone_metrics
 from .manifest import RunState
 from .pdbio import read_pdb
+from .s00_generate import backbone_filename
 
 STAGE = "01_backbone_filter"
 PASSED = "passed"
@@ -82,7 +83,7 @@ def run(cfg: Config, state: RunState, force: bool = False, dry_run: bool = False
         shutil.rmtree(staged)
     staged.mkdir(parents=True)
     for bid, path in survivors:
-        shutil.copy2(path, staged / f"{bid}.pdb")
+        shutil.copy2(path, staged / backbone_filename(bid))
 
     summary = rules.summary(all_metrics) if all_metrics else {"rules": list(rules.rules),
                                                               "n_input": 0, "n_pass": 0,

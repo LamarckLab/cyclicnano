@@ -1,7 +1,7 @@
 """Command-line entry point.
 
     cyclicnano run       --config my.yaml --profile config/profiles/amax.yaml
-    cyclicnano metrics   some_backbone.pdb --symmetry C5
+    cyclicnano metrics   design_27_bb.pdb --symmetry C5
     cyclicnano check     --config my.yaml           # validate config and rule syntax only
 """
 from __future__ import annotations
