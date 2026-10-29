@@ -764,6 +764,27 @@ def test_delivery_splits_the_folders_by_verdict_and_numbers_the_passing_ones():
         h.close()
 
 
+def test_delivery_table_carries_only_the_delivery_columns():
+    """The stage-01 metrics and the looser success rates live in the backbone table.
+    Copying them here made a row too wide to read, and a second copy that can age."""
+    h, out = _run_through_delivery()
+    try:
+        import pandas as pd
+        cols = set(pd.read_csv(out / "delivery.csv").columns)
+        assert cols == {"backbone_id", "folder", "symmetry", "n_res_monomer", "n_seqs",
+                        "n_predictions", "success_rate", "best_rmsd", "best_plddt",
+                        "final_pass", "final_fail_reason", "best_sequence_id",
+                        "best_sequence"}, sorted(cols)
+        # the looser cutoffs are recorded, but this table answers the 1.0 A question
+        assert not any(c.startswith("success_rate_at_") for c in cols), sorted(cols)
+        # ... and they are still recorded, one level up
+        bb = set(h.state.backbones.load().columns)
+        for dropped in ("n_helices", "strand_frac", "max_centre_distance"):
+            assert dropped in bb, dropped
+    finally:
+        h.close()
+
+
 def test_delivery_excludes_backbones_the_shape_filter_rejected():
     """Stage 01 rejects on geometry and that verdict is final; stage 04 does not."""
     h, out = _run_through_delivery()
@@ -803,7 +824,7 @@ def test_delivery_folder_holds_the_backbone_and_every_prediction():
         bid = _filtered_ids(h)[0]
         folder = _delivered(out)[bid]
         assert (folder / s00_generate.backbone_filename(bid)).exists()
-        assert (folder / "sequences.fasta").exists()
+        assert (folder / "sequences.json").exists()
         assert (folder / "summary.csv").exists()
         preds = folder / "predictions"
         assert len(list(preds.glob("*.pdb"))) == N_SEQ          # all of them, not the best
@@ -876,8 +897,10 @@ def test_delivery_is_quiet_when_every_score_file_is_present():
         h.close()
 
 
-def test_delivery_fasta_marks_the_best_sequence():
-    """Every sequence is listed, and the one that folded back closest is tagged."""
+def test_delivery_sequences_json_records_every_sequence():
+    """Every sequence is listed, exactly one is flagged best, and each points at the
+    prediction it produced by a path relative to the folder, so the folder can be
+    copied somewhere else and still resolve."""
     h, out = _run_through_delivery()
     try:
         seqs = h.state.sequences.load()
@@ -885,13 +908,58 @@ def test_delivery_fasta_marks_the_best_sequence():
         table = pd.read_csv(out / "delivery.csv")
         delivered = _delivered(out)
         for row in table.to_dict("records"):
+            folder = delivered[row["backbone_id"]]
+            doc = json.loads((folder / "sequences.json").read_text(encoding="utf-8"))
+
+            assert doc["backbone_id"] == row["backbone_id"]
+            assert doc["n_sequences"] == N_SEQ
+            assert len(doc["sequences"]) == N_SEQ
+            assert doc["best_sequence_id"] == row["best_sequence_id"]
+            assert doc["criteria"]["rmsd_cutoff"] == 1.0
+            assert doc["criteria"]["plddt_cutoff"] == 80.0
+
+            flagged = [e for e in doc["sequences"] if e["best"]]
+            assert len(flagged) == 1
+            assert flagged[0]["sequence_id"] == row["best_sequence_id"]
+
             group = seqs[seqs.backbone_id == row["backbone_id"]]
             assert abs(row["best_rmsd"] - group["sc_rmsd"].min()) < 1e-9
-            text = (delivered[row["backbone_id"]] / "sequences.fasta").read_text()
-            assert text.count(">") == N_SEQ
-            best_line = [l for l in text.splitlines() if l.endswith(" BEST")]
-            assert len(best_line) == 1
-            assert row["best_sequence_id"] in best_line[0]
+            assert abs(flagged[0]["sc_rmsd"] - group["sc_rmsd"].min()) < 1e-9
+            assert doc["n_pass"] == int(group["sc_pass"].fillna(False).astype(bool).sum())
+
+            for entry in doc["sequences"]:
+                assert (folder / entry["prediction"]).exists(), entry["prediction"]
+                assert (folder / entry["scores"]).exists(), entry["scores"]
+                assert entry["sequence"]
+    finally:
+        h.close()
+
+
+def test_delivery_json_is_valid_json_when_values_are_missing():
+    """json.dumps writes a bare NaN for a missing float, which is a Python extension
+    that strict parsers reject. A backbone whose sequences never folded has several."""
+    h, _ = _run_through_stage04()
+    try:
+        bid = _filtered_ids(h)[0]
+        seqs = h.state.sequences.load()
+        blanked = [{"sequence_id": s, "mean_plddt": None, "min_plddt": None,
+                    "ptm": None, "mpnn_score": None}
+                   for s in seqs[seqs.backbone_id == bid]["sequence_id"]]
+        h.state.sequences.upsert(blanked)
+        s04_delivery.run(h.cfg, h.state, force=True)
+
+        out = Path(h.cfg.outdir) / "04_delivery"
+
+        def strict(path):
+            def boom(const):
+                raise AssertionError(f"{path.name} carries a bare {const}")
+            return json.loads(path.read_text(encoding="utf-8"), parse_constant=boom)
+
+        doc = strict(out / "delivery.json")
+        assert doc["n_backbones"]
+        folder = _delivered(out)[bid]
+        entry = strict(folder / "sequences.json")["sequences"][0]
+        assert entry["mean_plddt"] is None
     finally:
         h.close()
 

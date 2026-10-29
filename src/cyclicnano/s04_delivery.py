@@ -24,6 +24,7 @@ import json
 import shutil
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from .config import Config
@@ -77,16 +78,67 @@ def _copy_predictions(group: list[dict], dest: Path) -> tuple[int, int]:
     return n, missing
 
 
-def _write_fasta(group: list[dict], best_id: str | None, path: Path) -> None:
-    lines = []
+def _jsonable(value):
+    """NaN and pandas NA are not JSON. json.dumps writes a bare NaN token for them,
+    which is a Python extension that strict parsers reject, so they become null."""
+    if value is None:
+        return None
+    if isinstance(value, float) and value != value:                 # NaN
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.floating):
+        return None if float(value) != float(value) else float(value)
+    if isinstance(value, np.bool_):
+        return bool(value)
+    return value
+
+
+_SEQ_FIELDS = ["seq_index", "sc_pass", "sc_rmsd", "mean_plddt", "min_plddt", "ptm",
+               "mpnn_score", "mpnn_global_score"]
+
+
+def _write_sequences(group: list[dict], best_id: str | None, backbone_id: str,
+                     folder: Path, criteria: dict) -> None:
+    """Every sequence written for this backbone, with where its prediction landed.
+
+    This replaces the FASTA the folder used to carry. A FASTA can hold the sequence
+    and whatever is crammed into its header, and that header had grown into an ad-hoc
+    record nothing could parse. The sequences are still a FASTA one directory up, in
+    02_sequences, for any tool that wants one.
+    """
+    entries = []
     for row in sorted(group, key=lambda r: r.get("seq_index", 0)):
-        tag = " BEST" if row["sequence_id"] == best_id else ""
-        lines.append(
-            f">{row['sequence_id']} rmsd={_f(row.get('sc_rmsd'))} "
-            f"plddt={_f(row.get('mean_plddt'), '.1f')} "
-            f"mpnn_score={_f(row.get('mpnn_score'), '.3f')}{tag}\n{row['sequence']}\n"
-        )
-    path.write_text("".join(lines), encoding="utf-8")
+        raw = row.get("pred_path")
+        pred = Path(str(raw)) if raw else None
+        entry = {"sequence_id": row["sequence_id"],
+                 "best": row["sequence_id"] == best_id}
+        entry.update({k: _jsonable(row.get(k)) for k in _SEQ_FIELDS})
+        # Relative to this folder, so the folder survives being copied elsewhere.
+        has_pred = bool(pred and pred.exists())
+        entry["prediction"] = f"predictions/{pred.name}" if has_pred else None
+        scores = scores_path_for(pred) if has_pred else None
+        entry["scores"] = f"predictions/{scores.name}" if scores and scores.exists() else None
+        entry["sequence"] = row["sequence"]                         # last: it is the long one
+        entries.append(entry)
+
+    passed = sum(1 for e in entries if e["sc_pass"])
+    (folder / "sequences.json").write_text(
+        json.dumps({
+            "backbone_id": backbone_id,
+            "n_sequences": len(entries),
+            "n_pass": passed,
+            "success_rate": round(passed / len(entries), 4) if entries else None,
+            "best_sequence_id": best_id,
+            "criteria": criteria,
+            "sequences": entries,
+        }, indent=2),
+        encoding="utf-8")
 
 
 _SEQ_COLUMNS = ["sequence_id", "seq_index", "sequence", "mpnn_score", "mpnn_global_score",
@@ -117,7 +169,9 @@ def run(cfg: Config, state: RunState, force: bool = False, dry_run: bool = False
     delivered = delivered.sort_values(
         ["final_pass", "success_rate", "best_rmsd"], ascending=[False, False, True])
 
-    extra = [c for c in backbones.columns if c.startswith("success_rate_at_")]
+    # Repeated into every sequences.json so a folder states the rule it was judged by.
+    criteria = {"rmsd_cutoff": float(cfg.get("validate.rmsd_cutoff", 1.0)),
+                "plddt_cutoff": float(cfg.get("validate.plddt_cutoff", 0.0))}
     rows, rank, missing_scores = [], 0, 0
     for record in delivered.to_dict("records"):
         bid = record["backbone_id"]
@@ -143,23 +197,24 @@ def run(cfg: Config, state: RunState, force: bool = False, dry_run: bool = False
         n_pred, n_missing = _copy_predictions(group, folder / "predictions")
         missing_scores += n_missing
         if group:
-            _write_fasta(group, best_id, folder / "sequences.fasta")
+            _write_sequences(group, best_id, bid, folder, criteria)
             cols = [c for c in _SEQ_COLUMNS if c in sequences.columns]
             per_seq = pd.DataFrame(group)[cols].sort_values("seq_index")
             per_seq.to_csv(folder / "summary.csv", index=False)
 
+        # Deliberately narrow. Everything the shape filter measured, and the success
+        # rate at the looser cutoffs, stays in tables/backbones.csv; repeating it here
+        # made a table nobody could read across. The protocol settles on 1.0 A, so the
+        # looser readings are not what this table is answering. What is left is which
+        # design, where it is, how well it folded back, and the verdict.
         rows.append({
             "backbone_id": bid,
-            "folder": rel.as_posix(),
+            "folder": rel.as_posix(),                       # scripts resolve the path from this
             "symmetry": record.get("symmetry"),
             "n_res_monomer": record.get("n_res_monomer"),
-            "n_helices": record.get("n_helices"),
-            "strand_frac": record.get("strand_frac"),
-            "max_centre_distance": record.get("max_centre_distance"),
             "n_seqs": record.get("n_seqs"),
             "n_predictions": n_pred,
             "success_rate": record.get("success_rate"),
-            **{c: record.get(c) for c in extra},
             "best_rmsd": best["sc_rmsd"] if best else None,
             # From the same row as best_rmsd and best_sequence_id, so the three cannot
             # describe different sequences.
@@ -176,7 +231,8 @@ def run(cfg: Config, state: RunState, force: bool = False, dry_run: bool = False
     (outdir / "delivery.json").write_text(
         json.dumps({"n_backbones": len(rows),
                     "n_final_pass": sum(1 for r in rows if r["final_pass"]),
-                    "backbones": rows}, indent=2, default=str),
+                    "backbones": [{k: _jsonable(v) for k, v in r.items()}
+                                  for r in rows]}, indent=2, default=str),
         encoding="utf-8")
 
     # A structure whose scores file is absent is delivered without its confidence, and

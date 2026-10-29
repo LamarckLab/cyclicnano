@@ -129,7 +129,7 @@ verdict is recorded as a column and the ranking puts the ones that passed on top
 ├── delivery.json             the same table, for readers without pandas
 └── <backbone_id>/
     ├── <backbone_id>.pdb     the design oligomer, as RFdiffusion wrote it
-    ├── sequences.fasta       every sequence, annotated, the best one tagged BEST
+    ├── sequences.json        every sequence, its scores and where its prediction is
     ├── summary.csv           one row per sequence: RMSD, pLDDT, pass
     └── predictions/          <sequence_id>.pdb and <sequence_id>_scores.json
 ```
