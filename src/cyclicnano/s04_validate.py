@@ -17,6 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 from .config import Config
 from .filters import FilterSet
@@ -86,6 +87,17 @@ def run(cfg: Config, state: RunState, force: bool = False, dry_run: bool = False
     for bid, group in seqs.groupby("backbone_id"):
         rm = group["sc_rmsd"].astype(float)
         valid = rm.dropna()
+        # The confidence OF the best sequence, not the best confidence of any sequence.
+        # Those are different numbers and the second one flatters a bad design: across
+        # 16 real backbones the two came from the same sequence once. The maximum was
+        # routinely set by a sequence AlphaFold was sure about and had folded wrong,
+        # 95.3 at 8.8 A, 90.5 at 15.3 A, while the column sat beside best_rmsd and
+        # best_sequence_id and read as though all three described one sequence.
+        best_i = valid.idxmin() if len(valid) else None
+        best_plddt = float("nan")
+        if best_i is not None and "mean_plddt" in group:
+            value = group.loc[best_i, "mean_plddt"]
+            best_plddt = float(value) if pd.notna(value) else float("nan")
         m = {
             "backbone_id": bid,
             "n_seqs": int(len(group)),
@@ -93,7 +105,7 @@ def run(cfg: Config, state: RunState, force: bool = False, dry_run: bool = False
             "success_rate": float(group["sc_pass"].fillna(False).astype(bool).mean()),
             "best_rmsd": float(valid.min()) if len(valid) else float("inf"),
             "median_rmsd": float(valid.median()) if len(valid) else float("inf"),
-            "best_plddt": float(group["mean_plddt"].max()) if "mean_plddt" in group else float("nan"),
+            "best_plddt": best_plddt,
         }
         for c in extra:
             col = f"sc_pass_at_{c:g}A"

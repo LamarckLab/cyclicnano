@@ -161,7 +161,9 @@ def run(cfg: Config, state: RunState, force: bool = False, dry_run: bool = False
             "success_rate": record.get("success_rate"),
             **{c: record.get(c) for c in extra},
             "best_rmsd": best["sc_rmsd"] if best else None,
-            "best_plddt": record.get("best_plddt"),
+            # From the same row as best_rmsd and best_sequence_id, so the three cannot
+            # describe different sequences.
+            "best_plddt": best.get("mean_plddt") if best else None,
             "final_pass": bool(record.get("final_pass")),
             "final_fail_reason": record.get("final_fail_reason"),
             "best_sequence_id": best_id,

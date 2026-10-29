@@ -282,6 +282,48 @@ def test_a_nonzero_success_rate_already_bounds_the_best_rmsd():
         h.close()
 
 
+def test_best_plddt_follows_the_best_rmsd_sequence_not_the_loudest_one():
+    """best_plddt is the confidence OF the best sequence, not the best confidence of
+    any sequence. The two are different numbers, and the second flatters a failure:
+    on real output the maximum was usually set by a sequence AlphaFold was sure about
+    and had folded wrong, 95.3 at 8.8 A. Sitting beside best_rmsd and best_sequence_id
+    it read as though all three described one sequence; now they do."""
+    h = Harness()
+    h.seed_backbones()
+    try:
+        s01_backbone_filter.run(h.cfg, h.state)
+        h.seed_predictions()
+
+        # a sequence AlphaFold is very sure about. The harness gives it a large
+        # perturbation, so it is nowhere near the best by RMSD.
+        seqs = h.state.sequences.load()
+        bid = _filtered_ids(h)[0]
+        loud = seqs[(seqs.backbone_id == bid) & (seqs.seq_index == 1)].iloc[0]
+        h.state.sequences.upsert([{"sequence_id": loud.sequence_id, "mean_plddt": 99.0}])
+
+        s04_validate.run(h.cfg, h.state, force=True)
+
+        seqs = h.state.sequences.load()
+        group = seqs[seqs.backbone_id == bid].dropna(subset=["sc_rmsd"])
+        closest = group.nsmallest(1, "sc_rmsd").iloc[0]
+        row = h.state.backbones.load().set_index("backbone_id").loc[bid]
+
+        assert closest.sequence_id != loud.sequence_id, "the planted row must not be the best"
+        assert abs(row["best_plddt"] - closest.mean_plddt) < 1e-9, row["best_plddt"]
+        assert row["best_plddt"] != 99.0, "it took the maximum instead of the best"
+
+        # and the delivery row keeps all three columns on that one sequence
+        s04_delivery.run(h.cfg, h.state, force=True)
+        import pandas as pd
+        table = pd.read_csv(Path(h.cfg.outdir) / "04_delivery" / "delivery.csv")
+        d = table[table.backbone_id == bid].iloc[0]
+        assert d.best_sequence_id == closest.sequence_id
+        assert abs(d.best_rmsd - closest.sc_rmsd) < 1e-9
+        assert abs(d.best_plddt - closest.mean_plddt) < 1e-9
+    finally:
+        h.close()
+
+
 def test_stage04_writes_no_directory_of_its_own():
     """Validation only adds columns. A second ranking file beside the delivery table
     would be the same numbers under another name, free to disagree with it."""
