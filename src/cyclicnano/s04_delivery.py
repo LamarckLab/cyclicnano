@@ -102,6 +102,51 @@ def _jsonable(value):
 _SEQ_FIELDS = ["seq_index", "sc_pass", "sc_rmsd", "mean_plddt", "min_plddt", "ptm",
                "mpnn_score", "mpnn_global_score"]
 
+# Written by stage 05 when it runs. A sequence that was never evaluated carries null
+# rather than a missing key, so that "not measured" is visible and cannot be mistaken
+# for "measured and poor".
+_INTERFACE_FIELDS = ["iptm", "multimer_ptm", "multimer_plddt", "dG_interface",
+                     "dSASA_interface", "dG_dSASA_100"]
+INTERFACE_DIR = "interface"
+
+
+def _interface_block(row: dict, folder: Path) -> dict | None:
+    """The stage-05 measurements for one sequence, or None if it was not evaluated.
+
+    These describe the contact between subunits, which nothing in stages 03 and 04
+    looks at: RMSD and pLDDT are both properties of a single chain. They are reported
+    and never filtered on, so a poor interface marks a design rather than removing it.
+    """
+    # Through _jsonable first. A sequence that was never evaluated reads back from the
+    # table as NaN, and bool(NaN) is True in Python, so the obvious test passes for
+    # exactly the rows it was written to catch and every unevaluated sequence was
+    # handed a block of nulls instead of a null block.
+    if not _jsonable(row.get("interface_scored")) and _jsonable(row.get("iptm")) is None:
+        return None
+    block = {k: _jsonable(row.get(k)) for k in _INTERFACE_FIELDS}
+    pred = row.get("interface_pred_path")
+    if pred:
+        name = Path(str(pred)).name
+        block["prediction"] = (f"{INTERFACE_DIR}/{name}"
+                               if (folder / INTERFACE_DIR / name).exists() else None)
+    else:
+        block["prediction"] = None
+    return block
+
+
+def _copy_interface(group: list[dict], dest: Path) -> int:
+    """Carry the predicted oligomer into the folder beside the monomer predictions."""
+    n = 0
+    for row in group:
+        pred = row.get("interface_pred_path")
+        if not pred or not Path(str(pred)).exists():
+            continue
+        src = Path(str(pred))
+        dest.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest / src.name)
+        n += 1
+    return n
+
 
 def _write_sequences(group: list[dict], best_id: str | None, backbone_id: str,
                      folder: Path, criteria: dict) -> None:
@@ -124,6 +169,7 @@ def _write_sequences(group: list[dict], best_id: str | None, backbone_id: str,
         entry["prediction"] = f"predictions/{pred.name}" if has_pred else None
         scores = scores_path_for(pred) if has_pred else None
         entry["scores"] = f"predictions/{scores.name}" if scores and scores.exists() else None
+        entry["interface"] = _interface_block(row, folder)
         entry["sequence"] = row["sequence"]                         # last: it is the long one
         entries.append(entry)
 
@@ -196,6 +242,7 @@ def run(cfg: Config, state: RunState, force: bool = False, dry_run: bool = False
 
         n_pred, n_missing = _copy_predictions(group, folder / "predictions")
         missing_scores += n_missing
+        n_iface = _copy_interface(group, folder / INTERFACE_DIR)
         if group:
             _write_sequences(group, best_id, bid, folder, criteria)
             cols = [c for c in _SEQ_COLUMNS if c in sequences.columns]
@@ -214,6 +261,7 @@ def run(cfg: Config, state: RunState, force: bool = False, dry_run: bool = False
             "n_res_monomer": record.get("n_res_monomer"),
             "n_seqs": record.get("n_seqs"),
             "n_predictions": n_pred,
+            "n_interface_evaluated": n_iface,
             "success_rate": record.get("success_rate"),
             "best_rmsd": best["sc_rmsd"] if best else None,
             # From the same row as best_rmsd and best_sequence_id, so the three cannot

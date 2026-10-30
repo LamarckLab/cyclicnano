@@ -147,6 +147,26 @@ validate:
   # threshold of its own and say what the number is for; do not let it track rmsd_cutoff
   # by accident.
 
+# ------------------------------------------------- 05  interface evaluation
+# Description, not selection. Nothing here feeds success_rate or final_pass; a weak
+# interface marks a design rather than removing it, which is what was asked for.
+#
+# It runs only on the sequences that passed stage 04, of the backbones that passed,
+# because the question is how the designs that got through assemble and not whether
+# to let more of them through.
+interface:
+  # ipTM is not defined for a single chain, so the oligomer has to be folded again
+  # with the multimer model. For C5 that is 300 residues rather than 60, about 40
+  # seconds a sequence against roughly one for the monomer.
+  model_type: alphafold2_multimer_v3
+  msa_mode: single_sequence   # a de novo design has no homologues as five chains either
+  num_recycle: 3
+  num_models: 1
+  # Rosetta cannot score an unrelaxed AlphaFold model usefully: a 300-residue pentamer
+  # came in at +7189 and left at -1065, a gap made of small clashes rather than of
+  # anything about the design. One restrained cycle costs about 85 seconds.
+  relax_cycles: 1
+
 # ------------------------------------------------- execution
 compute:
   # null leaves card selection alone (no CUDA_VISIBLE_DEVICES), which is right when
@@ -166,6 +186,7 @@ backend:
   envs:
     rfdiffusion: lmk_RFdiffusion
     proteinmpnn: lmk_ProteinMPNN
+    rosetta: null             # stage 05 interface energy; set it in the machine profile
     colabfold: null           # pixi-managed installs register no conda env
   # Tools with no conda env are activated here instead. PATH, LD_LIBRARY_PATH and
   # PYTHONPATH are prepended to the existing value; anything else is set outright.
@@ -173,4 +194,5 @@ backend:
   images:
     rfdiffusion: null
     proteinmpnn: null
+    rosetta: null
     colabfold: null

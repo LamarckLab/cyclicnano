@@ -26,6 +26,7 @@ backend:
   envs:
     rfdiffusion: lmk_RFdiffusion
     proteinmpnn: lmk_ProteinMPNN
+    rosetta: lmk_Rosetta        # stage 05 interface energy
     colabfold: null           # LocalColabFold is pixi-managed, not a conda env
   tool_env:
     colabfold:

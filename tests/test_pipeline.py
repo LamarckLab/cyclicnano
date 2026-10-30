@@ -772,9 +772,9 @@ def test_delivery_table_carries_only_the_delivery_columns():
         import pandas as pd
         cols = set(pd.read_csv(out / "delivery.csv").columns)
         assert cols == {"backbone_id", "folder", "symmetry", "n_res_monomer", "n_seqs",
-                        "n_predictions", "success_rate", "best_rmsd", "best_plddt",
-                        "final_pass", "final_fail_reason", "best_sequence_id",
-                        "best_sequence"}, sorted(cols)
+                        "n_predictions", "n_interface_evaluated", "success_rate",
+                        "best_rmsd", "best_plddt", "final_pass", "final_fail_reason",
+                        "best_sequence_id", "best_sequence"}, sorted(cols)
         # the looser cutoffs are recorded, but this table answers the 1.0 A question
         assert not any(c.startswith("success_rate_at_") for c in cols), sorted(cols)
         # ... and they are still recorded, one level up

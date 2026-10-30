@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 from . import (s00_generate, s01_backbone_filter, s02_design, s03_fold, s04_delivery,
-               s04_validate)
+               s04_validate, s05_interface)
 from .config import load_config, parse_overrides
 from .filters import FilterSet, RuleError
 from .geometry import backbone_metrics
@@ -23,7 +23,7 @@ from .runner import runner_from_config
 # Five tokens for six steps: validation produces no directory of its own, only
 # columns on the backbone table, so it is run as the first half of stage 04 rather
 # than given a number that would not appear in the output tree.
-STAGES = ["00", "01", "02", "03", "04"]
+STAGES = ["00", "01", "02", "03", "04", "05"]
 _SAMPLE_METRICS = {
     "n_chains": 5, "n_res_monomer": 60, "helix_frac": 0.5, "strand_frac": 0.1,
     "loop_frac": 0.4, "n_sse": 3, "loop_max_len": 8, "nterm_helix_len": 5,
@@ -120,6 +120,13 @@ def main(argv: list[str] | None = None) -> int:
     if "04" in wanted:
         s04_validate.run(cfg, state, force=args.force, dry_run=args.dry_run)
         s04_delivery.run(cfg, state, force=args.force, dry_run=args.dry_run)
+    if "05" in wanted:
+        s05_interface.run(cfg, state, runner, force=args.force, dry_run=args.dry_run)
+        # The measurements land on the sequence table, and the delivery folders are
+        # what renders it, so they are rewritten rather than left describing a run
+        # that has since been measured further.
+        if not args.dry_run:
+            s04_delivery.run(cfg, state, force=True)
 
     print(f"\ntables: {state.backbones.path}\n        {state.sequences.path}")
     return 0
