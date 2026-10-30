@@ -99,8 +99,7 @@ def _jsonable(value):
     return value
 
 
-_SEQ_FIELDS = ["seq_index", "sc_pass", "sc_rmsd", "mean_plddt", "min_plddt", "ptm",
-               "mpnn_score", "mpnn_global_score"]
+_SEQ_FIELDS = ["seq_index", "sc_pass", "sc_rmsd", "mean_plddt"]
 
 # Written by stage 05 when it runs. A sequence that was never evaluated carries null
 # rather than a missing key, so that "not measured" is visible and cannot be mistaken

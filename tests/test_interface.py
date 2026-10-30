@@ -211,6 +211,20 @@ def test_an_unevaluated_sequence_gets_a_null_block_not_a_block_of_nulls():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_the_record_carries_only_the_fields_that_were_asked_for():
+    """Trimmed on request. Everything dropped is still in tables/sequences.csv; what
+    goes here is what gets read when looking at one design."""
+    assert s04_delivery._SEQ_FIELDS == ["seq_index", "sc_pass", "sc_rmsd", "mean_plddt"]
+    assert s04_delivery._INTERFACE_FIELDS == [
+        "iptm", "multimer_ptm", "multimer_plddt", "dG_interface",
+        "dSASA_interface", "dG_dSASA_100"]
+    for gone in ("min_plddt", "ptm", "mpnn_score", "mpnn_global_score",
+                 "n_interface_residues", "interface_hbonds", "packstat",
+                 "shape_complementarity"):
+        assert gone not in s04_delivery._SEQ_FIELDS
+        assert gone not in s04_delivery._INTERFACE_FIELDS
+
+
 def test_a_dry_run_shows_both_commands_and_writes_nothing():
     tmp = Path(tempfile.mkdtemp(prefix="cyclicnano_iface_"))
     try:
