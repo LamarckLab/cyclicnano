@@ -267,11 +267,10 @@ def test_the_record_carries_only_the_fields_that_were_asked_for():
     goes here is what gets read when looking at one design."""
     assert s04_delivery._SEQ_FIELDS == ["seq_index", "sc_pass", "sc_rmsd", "mean_plddt"]
     assert s04_delivery._INTERFACE_FIELDS == [
-        "iptm", "multimer_ptm", "multimer_plddt", "dG_interface",
-        "dSASA_interface", "dG_dSASA_100"]
+        "iptm", "multimer_ptm", "multimer_plddt", "dG_interface"]
     for gone in ("min_plddt", "ptm", "mpnn_score", "mpnn_global_score",
                  "n_interface_residues", "interface_hbonds", "packstat",
-                 "shape_complementarity"):
+                 "shape_complementarity", "dSASA_interface", "dG_dSASA_100"):
         assert gone not in s04_delivery._SEQ_FIELDS
         assert gone not in s04_delivery._INTERFACE_FIELDS
 

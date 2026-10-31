@@ -104,8 +104,7 @@ _SEQ_FIELDS = ["seq_index", "sc_pass", "sc_rmsd", "mean_plddt"]
 # Written by stage 05 when it runs. A sequence that was never evaluated carries null
 # rather than a missing key, so that "not measured" is visible and cannot be mistaken
 # for "measured and poor".
-_INTERFACE_FIELDS = ["iptm", "multimer_ptm", "multimer_plddt", "dG_interface",
-                     "dSASA_interface", "dG_dSASA_100"]
+_INTERFACE_FIELDS = ["iptm", "multimer_ptm", "multimer_plddt", "dG_interface"]
 INTERFACE_DIR = "interface"
 
 
