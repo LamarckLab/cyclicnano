@@ -166,6 +166,10 @@ interface:
   # came in at +7189 and left at -1065, a gap made of small clashes rather than of
   # anything about the design. One restrained cycle costs about 85 seconds.
   relax_cycles: 1
+  # colabfold writes eight files per sequence and two are kept. The rest are plots,
+  # the single-sequence a3m and the PAE dump; on 328 sequences they were 1971 files
+  # and 260 of the 319 MB the stage occupied.
+  keep_all_outputs: false
 
 # ------------------------------------------------- execution
 compute:

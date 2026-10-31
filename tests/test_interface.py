@@ -110,6 +110,57 @@ def test_predictions_are_regrouped_under_short_names():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_the_stage_directory_is_left_holding_only_the_regrouped_folders():
+    """colabfold writes eight files per sequence and two are kept. Stage 03 has always
+    swept the rest; stage 05 shipped without doing so, and on 328 sequences that left
+    1971 loose files beside the 27 folders and 260 of the 319 MB."""
+    tmp = Path(tempfile.mkdtemp(prefix="cyclicnano_iface_"))
+    try:
+        from cyclicnano.config import load_config
+        from cyclicnano.manifest import RunState
+
+        cfg = load_config(overrides=parse_overrides(
+            ["target.symmetry=C5", f"run.outdir={tmp.as_posix()}", "backend.kind=local"]))
+        state = RunState(cfg.outdir)
+        work = state.stage_dir(s05_interface.STAGE)
+
+        # what colabfold leaves behind for one sequence
+        sid = "design_1__seq000"
+        (work / f"{sid}_unrelaxed_rank_001_x.pdb").write_text("ATOM", encoding="utf-8")
+        (work / f"{sid}_scores_rank_001_x.json").write_text(
+            json.dumps({"iptm": 0.9}), encoding="utf-8")
+        for junk in (f"{sid}.a3m", f"{sid}_coverage.png", f"{sid}_pae.png",
+                     f"{sid}_plddt.png", f"{sid}.done.txt",
+                     f"{sid}_predicted_aligned_error_v1.json"):
+            (work / junk).write_text("x", encoding="utf-8")
+        for keep in ("config.json", "cite.bibtex", "log.txt"):
+            (work / keep).write_text("x", encoding="utf-8")
+
+        rows = s05_interface.regroup(
+            work, [{"sequence_id": sid,
+                    "interface_pred_path": str(work / f"{sid}_unrelaxed_rank_001_x.pdb"),
+                    "interface_ok": True}])
+        assert rows[0]["interface_ok"]
+
+        # the sweep, as run() does it
+        logs = Path(cfg.outdir) / "logs"
+        for path in list(work.iterdir()):
+            if not path.is_file():
+                continue
+            if path.name in ("config.json", "cite.bibtex", "log.txt"):
+                (logs / "colabfold_multimer").mkdir(parents=True, exist_ok=True)
+                path.replace(logs / "colabfold_multimer" / path.name)
+            else:
+                path.unlink()
+
+        assert [p.name for p in work.iterdir()] == ["design_1"]
+        assert sorted(p.name for p in (work / "design_1").iterdir()) == [
+            "seq000_af2multimer.pdb", "seq000_af2multimer_scores.json"]
+        assert (logs / "colabfold_multimer" / "config.json").exists()
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_ipTM_is_read_from_the_multimer_scores():
     tmp = Path(tempfile.mkdtemp(prefix="cyclicnano_iface_"))
     try:

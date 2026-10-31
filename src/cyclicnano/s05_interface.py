@@ -13,11 +13,10 @@ Two measurements, from one structure:
   defined for a single chain. This is a separate, heavier prediction: for C5 it folds
   300 residues rather than 60.
 
-  dG_separated, from Rosetta, for taking one subunit out of the assembled ring. It is
-  computed on that same predicted oligomer, after a restrained relax, so the two
-  numbers describe the same object and can be read against each other.
+  dG_separated, from Rosetta, for the contact between two subunits of that same
+  predicted oligomer, after a restrained relax.
 
-Scope is deliberately narrow. Only backbones that passed stage 04, and within them
+  Scope is deliberately narrow. Only backbones that passed stage 04, and within them
 only sequences that passed, because this is an evaluation of the designs that got
 through and not a second filter applied to everything.
 """
@@ -34,7 +33,6 @@ STAGE = "05_interface"
 
 PRED_SUFFIX = "_af2multimer.pdb"
 SCORES_SUFFIX = "_af2multimer_scores.json"
-RELAXED_SUFFIX = "_relaxed.pdb"
 
 WORKER = Path(__file__).resolve().parent / "scripts" / "interface_energy.py"
 
@@ -167,6 +165,26 @@ def run(cfg: Config, state: RunState, runner: Runner, force: bool = False,
     n_pred = sum(1 for r in scored if r.get("interface_ok"))
     print(f"[{STAGE}] {n_pred}/{len(rows)} multimer predictions recovered")
 
+    # The same tidying stage 03 does, which this stage was missing: colabfold leaves
+    # six files per sequence beside the two that are kept, and on 328 sequences that
+    # was 1971 loose files and 260 of the 319 MB. The coverage plot and the a3m are
+    # particularly empty here, since single-sequence mode means the alignment is the
+    # input sequence and nothing else.
+    if not cfg.get("interface.keep_all_outputs", False):
+        archive = logs / "colabfold_multimer"
+        removed = 0
+        for path in work.iterdir():
+            if not path.is_file():                          # the regrouped folders stay
+                continue
+            if path.name in ("config.json", "cite.bibtex", "log.txt"):
+                archive.mkdir(parents=True, exist_ok=True)
+                path.replace(archive / path.name)
+            else:
+                path.unlink()
+                removed += 1
+        if removed:
+            print(f"[{STAGE}] removed {removed} unused colabfold products")
+
     # Rosetta runs in its own environment, so the structures go over as a manifest and
     # come back as one result per line.
     jobs = logs / "interface_jobs.jsonl"
@@ -176,8 +194,8 @@ def run(cfg: Config, state: RunState, runner: Runner, force: bool = False,
             pred = row.get("interface_pred_path")
             if not pred:
                 continue
-            relaxed = str(Path(pred).with_name(Path(pred).name.replace(PRED_SUFFIX,
-                                                                      RELAXED_SUFFIX)))
+            relaxed = str(Path(pred).with_name(
+                Path(pred).name.replace(PRED_SUFFIX, "_relaxed.pdb")))
             fh.write(json.dumps({"id": row["sequence_id"], "pdb": pred,
                                  "relaxed_pdb": relaxed}) + "\n")
 
