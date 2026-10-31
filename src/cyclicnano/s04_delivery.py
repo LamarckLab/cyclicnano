@@ -122,13 +122,18 @@ def _interface_block(row: dict, folder: Path) -> dict | None:
     if not _jsonable(row.get("interface_scored")) and _jsonable(row.get("iptm")) is None:
         return None
     block = {k: _jsonable(row.get(k)) for k in _INTERFACE_FIELDS}
-    pred = row.get("interface_pred_path")
-    if pred:
-        name = Path(str(pred)).name
-        block["prediction"] = (f"{INTERFACE_DIR}/{name}"
-                               if (folder / INTERFACE_DIR / name).exists() else None)
-    else:
-        block["prediction"] = None
+    # Two structures, because the two numbers come from different ones: ipTM from the
+    # multimer prediction, the energy from the designed geometry carrying the side
+    # chains the sequence implies.
+    for key, field in (("interface_pred_path", "prediction"),
+                       ("dimer_relaxed_path", "dimer")):
+        value = row.get(key)
+        if value:
+            name = Path(str(value)).name
+            block[field] = (f"{INTERFACE_DIR}/{name}"
+                            if (folder / INTERFACE_DIR / name).exists() else None)
+        else:
+            block[field] = None
     return block
 
 
@@ -136,13 +141,15 @@ def _copy_interface(group: list[dict], dest: Path) -> int:
     """Carry the predicted oligomer into the folder beside the monomer predictions."""
     n = 0
     for row in group:
-        pred = row.get("interface_pred_path")
-        if not pred or not Path(str(pred)).exists():
-            continue
-        src = Path(str(pred))
-        dest.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dest / src.name)
-        n += 1
+        for key in ("interface_pred_path", "dimer_relaxed_path"):
+            value = row.get(key)
+            if not value or not Path(str(value)).exists():
+                continue
+            src = Path(str(value))
+            dest.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest / src.name)
+            if key == "interface_pred_path":
+                n += 1
     return n
 
 

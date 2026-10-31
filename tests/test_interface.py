@@ -92,6 +92,57 @@ def test_the_prediction_model_can_be_overridden():
     assert argv[argv.index("--model-type") + 1] == "alphafold2_multimer_v2"
 
 
+def test_the_energy_dimer_is_built_on_the_design_backbone():
+    """The structure the energy is measured on is not the prediction. Two copies of
+    the monomer stage 03 predicted are placed at two adjacent subunit positions of the
+    designed backbone, carrying their side chains, which is the only place in this
+    pipeline real side chains exist. The transform comes from CA positions but has to
+    reach every atom: the PDB reader keeps only the backbone, and Rosetta cannot score
+    an interface made of glycine.
+    """
+    import numpy as np
+
+    from cyclicnano.pdbio import read_pdb, write_pdb
+    from synthetic import cyclic_oligomer
+
+    tmp = Path(tempfile.mkdtemp(prefix="cyclicnano_iface_"))
+    try:
+        design = tmp / "design_1_bb.pdb"
+        write_pdb(str(design), cyclic_oligomer(n_sym=5, ring_radius=16.0))
+        ring = read_pdb(str(design))
+        chain_a = ring.chains["A"]
+
+        # a stand-in prediction: chain A of that ring, with a side-chain atom added
+        # to every residue so the transform can be checked to reach beyond the backbone
+        lines, serial = [], 1
+        for r in range(chain_a.n_res):
+            for atom in ("N", "CA", "C", "O", "CB"):
+                xyz = chain_a.coords.get(atom, chain_a.coords["CA"])[r]
+                lines.append(
+                    "ATOM  {:5d}  {:<3s} ALA A{:4d}    {:8.3f}{:8.3f}{:8.3f}  1.00  0.00"
+                    .format(serial, atom, r + 1, xyz[0], xyz[1], xyz[2]) + "\n")
+                serial += 1
+        monomer = tmp / "seq000_af2.pdb"
+        monomer.write_text("".join(lines), encoding="utf-8")
+
+        out = s05_interface.build_dimer(design, monomer, tmp / "seq000_dimer.pdb")
+        assert out["dimer_fit_rmsd"] < 0.01, out        # the monomer IS chain A
+
+        text = (tmp / "seq000_dimer.pdb").read_text(encoding="utf-8")
+        assert text.count("ATOM") == 2 * chain_a.n_res * 5
+        assert " CB " in text, "side chains must survive the transform"
+        assert text.count("TER") == 2
+
+        built = read_pdb(str(tmp / "seq000_dimer.pdb"))
+        assert built.n_chains == 2 and built.chain_ids == ["A", "B"]
+        # the two copies land exactly where the design put its two adjacent subunits
+        for label, target in (("A", "A"), ("B", "B")):
+            far = np.linalg.norm(built.chains[label].ca - ring.chains[target].ca, axis=1).max()
+            assert far < 0.01, (label, far)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_predictions_are_regrouped_under_short_names():
     tmp = Path(tempfile.mkdtemp(prefix="cyclicnano_iface_"))
     try:
@@ -268,6 +319,10 @@ def test_the_record_carries_only_the_fields_that_were_asked_for():
     assert s04_delivery._SEQ_FIELDS == ["seq_index", "sc_pass", "sc_rmsd", "mean_plddt"]
     assert s04_delivery._INTERFACE_FIELDS == [
         "iptm", "multimer_ptm", "multimer_plddt", "dG_interface"]
+    # the block also names the two structures the two numbers came from
+    block = s04_delivery._interface_block(
+        {"interface_scored": True, "iptm": 0.9}, Path("."))
+    assert set(block) == set(s04_delivery._INTERFACE_FIELDS) | {"prediction", "dimer"}
     for gone in ("min_plddt", "ptm", "mpnn_score", "mpnn_global_score",
                  "n_interface_residues", "interface_hbonds", "packstat",
                  "shape_complementarity", "dSASA_interface", "dG_dSASA_100"):
