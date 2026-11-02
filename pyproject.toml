@@ -17,13 +17,22 @@ dependencies = [
 
 [project.optional-dependencies]
 parquet = ["pyarrow>=14"]
-dev = ["pytest>=7"]
+# httpx is the FastAPI test client's transport; tests/test_webui_http.py needs it.
+dev = ["pytest>=7", "httpx>=0.27"]
+# The read-only web browser. Kept optional: the pipeline itself never imports a
+# web framework, so a machine that only runs designs does not need these.
+webui = ["fastapi>=0.110", "uvicorn>=0.27"]
 
 [project.scripts]
 cyclicnano = "cyclicnano.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# The web UI is served from files on disk, so they have to be installed next to
+# the module rather than left behind in the source tree.
+"cyclicnano.webui" = ["static/*", "static/vendor/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

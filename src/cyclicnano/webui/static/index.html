@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cyclicnano</title>
+
+<!-- Mol* ships its own stylesheet, scoped entirely to .msp-* selectors: 555 of
+     its 559 rule blocks name one and the other four are media queries, so it has
+     no bare html/body/* rule to leak into the page below. -->
+<link rel="stylesheet" href="/static/vendor/molstar.css"
+      onerror="this.onerror=null;this.href='https://cdn.jsdelivr.net/npm/molstar@5.13.1/build/viewer/molstar.css'">
+<link rel="stylesheet" href="/static/style.css">
+
+<script>
+// Stamp the chosen theme before first paint, so a dark-mode reader never sees a
+// white flash. The attribute wins over the OS setting in both directions.
+try {
+  var t = localStorage.getItem('cyclicnano.theme');
+  if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+} catch (e) { /* private window, or site data blocked */ }
+</script>
+</head>
+<body>
+
+<header>
+  <a class="brand" href="#/">cyclicnano</a>
+  <nav id="crumbs" aria-label="Location"></nav>
+  <span class="spacer"></span>
+  <span id="rootnote" class="note"></span>
+  <button id="lang" class="chip" type="button"></button>
+  <button id="theme" class="chip icon" type="button"></button>
+</header>
+
+<main id="view">
+  <p class="loading">Loading…</p>
+</main>
+
+<!-- Vendored by `python -m cyclicnano.webui.fetch_vendor`. If that has not been
+     run, or the file was removed, fall back to the CDN so the viewer still works
+     on a machine with internet access. Five megabytes, so it is loaded last and
+     the tables are usable before it arrives. -->
+<script src="/static/vendor/molstar.js"></script>
+<script>
+if (!window.molstar) {
+  document.write('<script src="https://cdn.jsdelivr.net/npm/molstar@5.13.1/build/viewer/molstar.js"><\/script>');
+}
+</script>
+
+<!-- i18n first: app.js calls t() while it renders. Both are classic scripts, so
+     their top-level declarations share one global lexical scope. -->
+<script src="/static/i18n.js"></script>
+<script src="/static/app.js"></script>
+
+</body>
+</html>

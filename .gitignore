@@ -20,6 +20,11 @@ htmlcov/
 /runs/
 *.parquet
 
+# Third-party browser bundle, fetched by cyclicnano.webui.fetch_vendor. Half a
+# megabyte of minified JavaScript does not belong in a research repository, and
+# the page falls back to a CDN when it is absent.
+src/cyclicnano/webui/static/vendor/
+
 # Model weights and databases (never committed)
 weights/
 params/

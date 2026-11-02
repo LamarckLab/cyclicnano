@@ -1,0 +1,881 @@
+/* cyclicnano browser.
+ *
+ * Colours come from the validated reference palette: categorical slot 1 for the
+ * single-series marks, and the fixed status palette for pass and fail, always
+ * beside a glyph and a label so no state is carried by colour alone. The
+ * structures themselves are coloured by Mol*, from its own themes, which is why
+ * no chain ramp is defined here any more.
+ *
+ * Dark mode is chosen, not flipped: its own steps from the same ramps, declared
+ * under both the OS media query and the explicit theme attribute so the toggle
+ * wins either way.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* surfaces and ink */
+  --plane:        #f9f9f7;
+  --surface:      #fcfcfb;
+  --surface-sunk: #f3f3f0;
+  --ink:          #0b0b0b;
+  --ink-2:        #52514e;
+  --ink-muted:    #898781;
+  --hairline:     rgba(11, 11, 11, 0.10);
+  --rule:         #e1e0d9;
+
+  /* the one series colour: every magnitude mark on the page is one series */
+  --series-1:     #2a78d6;
+
+  /* status - fixed, never themed, never reused for a series */
+  --good:         #0ca30c;
+  --critical:     #d03b3b;
+  --warning:      #fab219;
+  --good-text:    #006300;
+  --critical-text:#a62828;
+
+  /* The 3D viewport, which follows the theme, and the job log, which does not:
+     a log is light text on dark and stays that way in both modes. */
+  --stage:        #fcfcfb;
+  --console:      #1a1a19;
+
+  /* type */
+  --sans: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+
+  /* spacing and shape */
+  --s1: 4px;  --s2: 8px;  --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px;
+  --r1: 6px;  --r2: 10px;
+  --lift: 0 1px 2px rgba(11, 11, 11, 0.04), 0 1px 1px rgba(11, 11, 11, 0.03);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --plane:        #0d0d0d;
+    --surface:      #1a1a19;
+    --surface-sunk: #222221;
+    --ink:          #f0efec;
+    --ink-2:        #c3c2b7;
+    --ink-muted:    #898781;
+    --hairline:     rgba(255, 255, 255, 0.10);
+    --rule:         #2c2c2a;
+    --series-1:     #3987e5;
+    --good-text:    #0ca30c;
+    --critical-text:#e66767;
+    --stage:        #1a1a19;
+    --lift: none;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --plane:        #0d0d0d;
+  --surface:      #1a1a19;
+  --surface-sunk: #222221;
+  --ink:          #f0efec;
+  --ink-2:        #c3c2b7;
+  --ink-muted:    #898781;
+  --hairline:     rgba(255, 255, 255, 0.10);
+  --rule:         #2c2c2a;
+  --series-1:     #3987e5;
+  --good-text:    #0ca30c;
+  --critical-text:#e66767;
+  --stage:        #1a1a19;
+  --lift: none;
+}
+
+/* ------------------------------------------------------------------- base */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--plane);
+  color: var(--ink);
+  font: 400 14px/1.55 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--series-1); text-decoration: none; }
+a:hover { text-decoration: underline; text-underline-offset: 2px; }
+
+button {
+  font: inherit;
+  color: var(--ink-2);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r1);
+  padding: 5px 10px;
+  cursor: pointer;
+  line-height: 1.2;
+}
+button:hover { color: var(--ink); border-color: var(--ink-muted); }
+button[aria-pressed="true"] { color: var(--surface); background: var(--series-1); border-color: var(--series-1); }
+
+select {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r1);
+  padding: 5px 8px;
+  max-width: 100%;
+}
+select:disabled { color: var(--ink-muted); background: var(--surface-sunk); cursor: not-allowed; }
+
+/* ----------------------------------------------------------------- header */
+
+header {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: 0 var(--s5);
+  height: 56px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  backdrop-filter: saturate(180%) blur(12px);
+  border-bottom: 1px solid var(--hairline);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.brand {
+  font-size: 15px;
+  font-weight: 620;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.brand:hover { text-decoration: none; color: var(--series-1); }
+
+#crumbs { font-size: 13px; color: var(--ink-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#crumbs .sep { padding: 0 6px; color: var(--ink-muted); }
+
+.spacer { flex: 1 1 auto; }
+.note { color: var(--ink-muted); font-size: 12px; font-family: var(--mono); }
+
+main { padding: var(--s5); max-width: 1680px; margin: 0 auto; }
+
+h1 { font-size: 22px; font-weight: 620; letter-spacing: -0.015em; margin: 0 0 var(--s1); }
+h2 { font-size: 13px; font-weight: 620; letter-spacing: 0.02em; text-transform: uppercase;
+     color: var(--ink-2); margin: 0 0 var(--s3); }
+.sub { color: var(--ink-2); margin: 0 0 var(--s5); font-size: 13.5px; max-width: 90ch; }
+
+.loading, .empty { color: var(--ink-muted); padding: var(--s6) 0; }
+.error {
+  background: color-mix(in srgb, var(--critical) 8%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--critical) 30%, transparent);
+  color: var(--critical-text);
+  padding: var(--s3) var(--s4);
+  border-radius: var(--r1);
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.card, .panel {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r2);
+  box-shadow: var(--lift);
+}
+.panel { padding: var(--s4) var(--s5) var(--s5); }
+
+/* -------------------------------------------------------------- run cards */
+
+.runs { display: grid; gap: var(--s4); grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); }
+
+.card {
+  display: block;
+  color: inherit;
+  padding: var(--s4) var(--s5) var(--s5);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.card:hover {
+  text-decoration: none;
+  border-color: color-mix(in srgb, var(--series-1) 45%, transparent);
+  box-shadow: 0 2px 10px rgba(11, 11, 11, 0.06);
+}
+
+.card-head { display: flex; align-items: center; gap: var(--s2); margin-bottom: var(--s4); }
+.card-head .name { font-size: 17px; font-weight: 620; letter-spacing: -0.01em; margin-right: auto; }
+
+.badge {
+  font-size: 11px;
+  font-weight: 550;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-sunk);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.badge.sym { background: color-mix(in srgb, var(--series-1) 12%, var(--surface)); color: var(--series-1); }
+.badge.done { background: color-mix(in srgb, var(--good) 13%, var(--surface)); color: var(--good-text); }
+.badge.best { background: color-mix(in srgb, var(--series-1) 14%, var(--surface)); color: var(--series-1); }
+
+/* The funnel. One series, so one colour: the bar length carries the count and
+   the row position carries the stage. A ramp here would re-encode length as
+   hue and spend the only free channel on nothing. */
+.funnel { display: grid; grid-template-columns: auto 1fr auto; gap: 7px var(--s3); align-items: center; }
+.funnel .k { font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+.funnel .track { height: 8px; background: var(--surface-sunk); border-radius: 999px; overflow: hidden; }
+.funnel .fill { height: 100%; background: var(--series-1); border-radius: 0 4px 4px 0; min-width: 2px; }
+.funnel .n {
+  font-size: 13px; font-variant-numeric: tabular-nums; text-align: right;
+  min-width: 3.6ch; color: var(--ink);
+}
+.funnel .k.row-final { color: var(--ink); font-weight: 550; }
+.funnel .n.row-final { font-size: 15px; font-weight: 620; }
+.funnel .n.nil { color: var(--ink-muted); }
+
+.aside {
+  margin-top: var(--s4); padding-top: var(--s3); border-top: 1px solid var(--rule);
+  color: var(--ink-muted); font-size: 12px;
+}
+
+/* ----------------------------------------------------------------- tables */
+
+.tablewrap {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r2);
+  box-shadow: var(--lift);
+  overflow: auto;
+  max-height: 72vh;
+}
+
+table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 13px; }
+
+th, td {
+  text-align: right;
+  padding: 8px var(--s3);
+  border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+}
+th:first-child, td:first-child { padding-left: var(--s4); }
+th:last-child, td:last-child { padding-right: var(--s4); }
+th.left, td.left { text-align: left; }
+
+thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  color: var(--ink-2);
+  font-weight: 550;
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  user-select: none;
+  z-index: 1;
+  box-shadow: inset 0 -1px 0 var(--rule);
+  border-bottom: none;
+}
+thead th:hover { color: var(--ink); }
+thead th .caret { color: var(--series-1); font-size: 9px; }
+
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: color-mix(in srgb, var(--series-1) 5%, var(--surface)); }
+tbody tr.selected { background: color-mix(in srgb, var(--series-1) 11%, var(--surface)); }
+tbody tr:last-child td { border-bottom: none; }
+
+/* Columns of numbers align only with equal-width digits. */
+td.num, th.num { font-variant-numeric: tabular-nums; }
+td.id { font-family: var(--mono); font-size: 12.5px; font-weight: 550; }
+.nil { color: var(--ink-muted); }
+
+/* Status never by colour alone: the glyph and the column name carry it too. */
+.flag { font-weight: 600; }
+.flag.yes { color: var(--good-text); }
+.flag.no { color: var(--critical-text); }
+
+/* One encoded column, the headline metric. Bar beside the number, not behind
+   it, so nothing is ever read through a fill. */
+.meter { display: inline-flex; align-items: center; gap: var(--s2); }
+.meter .track { width: 44px; height: 5px; background: var(--surface-sunk); border-radius: 999px; overflow: hidden; }
+.meter .fill { height: 100%; background: var(--series-1); border-radius: 0 3px 3px 0; min-width: 1px; }
+
+.seq {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: -0.2px;
+  color: var(--ink-2);
+  max-width: 34ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hint { font-size: 12px; color: var(--ink-muted); margin: var(--s3) 0 0; }
+
+/* ----------------------------------------------------------------- detail */
+
+.detail { display: grid; gap: var(--s4); grid-template-columns: 1fr; align-items: start; }
+
+/* Two columns only where both fit: Mol*'s own control panel and sequence track
+   need roughly 900px before they stop crowding the viewport, and a cramped
+   viewer is worse than scrolling to it. */
+@media (min-width: 1660px) {
+  .detail { grid-template-columns: minmax(0, 1fr) 920px; }
+  .viewer-panel { position: sticky; top: calc(56px + var(--s4)); }
+}
+
+.criteria {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  background: var(--surface-sunk);
+  border-left: 2px solid var(--series-1);
+  border-radius: 0 var(--r1) var(--r1) 0;
+  padding: var(--s2) var(--s3);
+  margin-bottom: var(--s4);
+  line-height: 1.6;
+}
+
+/* Stat tiles: the number is the chart. Proportional figures, because a large
+   standalone number reads loose with tabular digits. */
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: var(--s3);
+  margin-bottom: var(--s4);
+}
+.fact {
+  background: var(--surface-sunk);
+  border-radius: var(--r1);
+  padding: var(--s2) var(--s3);
+}
+.fact .k { font-size: 11px; color: var(--ink-2); white-space: nowrap; }
+.fact .v { font-size: 19px; font-weight: 600; letter-spacing: -0.02em; margin-top: 1px; }
+.fact .u { font-size: 12px; font-weight: 400; color: var(--ink-muted); }
+
+/* ----------------------------------------------------------------- viewer */
+
+.viewer-panel { padding: var(--s4); }
+
+/* Mol* measures this element and draws into it, so it needs a definite size and
+   holds nothing else. Its own expand button goes fullscreen from here. */
+.stage {
+  position: relative;
+  background: var(--stage);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r1);
+  overflow: hidden;
+  height: min(72vh, 760px);
+  min-height: 440px;
+}
+.stage canvas { display: block; }
+
+/* Mol* draws its own rounded corners nowhere, so the host clips for it. */
+.stage .msp-plugin { border-radius: inherit; }
+
+.viewer-msg {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink-2);
+  background: var(--surface-sunk);
+  border-radius: var(--r1);
+  padding: var(--s2) var(--s3);
+  margin-bottom: var(--s3);
+}
+.viewer-msg[hidden] { display: none; }
+
+.controls { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); align-items: center; }
+.controls.top { margin-bottom: var(--s3); }
+.controls.bottom { margin-top: var(--s3); font-size: 13px; }
+.controls label { font-size: 11px; color: var(--ink-2); display: flex; flex-direction: column; gap: 3px; }
+.controls label.grow { flex: 1 1 220px; min-width: 0; }
+.controls label.grow select { width: 100%; }
+
+/* The scale legend a semantic-heat ramp has to ship with. */
+.scale { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s3); margin-top: var(--s3);
+         font-size: 11px; color: var(--ink-2); }
+.scale .item { display: inline-flex; align-items: center; gap: 5px; }
+.scale .sw { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+
+.structnote { font-size: 12.5px; color: var(--ink-2); line-height: 1.65; margin-top: var(--s3); }
+.structnote .warn { color: var(--ink-muted); }
+
+/* ----------------------------------------------------------- reduced motion */
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+
+/* --------------------------------------------------------------- export bar */
+
+.exportbar { padding: var(--s3) var(--s4); margin-bottom: var(--s4); }
+.exportbar .controls { gap: var(--s3); }
+.exportbar .hint { margin-top: var(--s2); }
+
+.btnlink {
+  font-size: 13px;
+  color: var(--series-1);
+  border: 1px solid color-mix(in srgb, var(--series-1) 35%, transparent);
+  border-radius: var(--r1);
+  padding: 5px 11px;
+  white-space: nowrap;
+}
+.btnlink:hover {
+  text-decoration: none;
+  color: var(--surface);
+  background: var(--series-1);
+  border-color: var(--series-1);
+}
+
+/* ------------------------------------------------------------------ job pages */
+
+.pagehead { display: flex; align-items: flex-start; gap: var(--s4); flex-wrap: wrap; }
+.pagehead > div { flex: 1 1 420px; min-width: 0; }
+.pagehead .btnlink { margin-top: var(--s1); }
+
+.notice { max-width: 76ch; }
+.notice p { margin: 0 0 var(--s2); }
+
+.jobform { margin-bottom: var(--s4); }
+
+.formgrid {
+  display: grid;
+  gap: var(--s4);
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  margin-bottom: var(--s4);
+}
+.formrow { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.formrow > label { font-size: 12px; font-weight: 550; color: var(--ink); }
+
+.formrow input, .formrow select {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r1);
+  padding: 6px 8px;
+  width: 100%;
+}
+.formrow input:focus, .formrow select:focus {
+  outline: 2px solid color-mix(in srgb, var(--series-1) 45%, transparent);
+  outline-offset: -1px;
+  border-color: var(--series-1);
+}
+.formrow input[type="number"] { font-variant-numeric: tabular-nums; }
+
+.fieldnote { font-size: 11.5px; color: var(--ink-muted); line-height: 1.5; }
+.fieldnote code { font-family: var(--mono); font-size: 11px; }
+
+/* A cost warning is a state, so it carries a label and not just a colour. */
+.warnbox:empty { display: none; }
+.warnline {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--warning) 14%, var(--surface));
+  border-left: 2px solid var(--warning);
+  border-radius: 0 var(--r1) var(--r1) 0;
+  padding: var(--s2) var(--s3);
+  margin-bottom: var(--s2);
+}
+
+button.primary {
+  color: #fff;
+  background: var(--series-1);
+  border-color: var(--series-1);
+  font-weight: 550;
+  padding: 7px 18px;
+}
+button.primary:hover { filter: brightness(1.08); color: #fff; }
+button.primary:disabled { opacity: 0.5; cursor: default; filter: none; }
+
+.badge.running { background: color-mix(in srgb, var(--series-1) 14%, var(--surface)); color: var(--series-1); }
+.badge.bad { background: color-mix(in srgb, var(--critical) 13%, var(--surface)); color: var(--critical-text); }
+.badge.warn { background: color-mix(in srgb, var(--warning) 20%, var(--surface)); color: #6b5200; }
+
+.joblist { display: flex; flex-direction: column; }
+.jobrow {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: 9px var(--s1);
+  border-bottom: 1px solid var(--rule);
+  color: inherit;
+}
+.jobrow:last-child { border-bottom: none; }
+.jobrow:hover { text-decoration: none; background: color-mix(in srgb, var(--series-1) 5%, var(--surface)); }
+.jobrow .jid { font-family: var(--mono); font-size: 12.5px; font-weight: 550; }
+.jobrow .spacer { flex: 1; }
+
+.log {
+  margin: var(--s3) 0 0;
+  padding: var(--s3);
+  max-height: 56vh;
+  overflow: auto;
+  background: var(--console);
+  color: #c3c2b7;
+  border-radius: var(--r1);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.cmdbox { margin-top: var(--s3); font-size: 12px; color: var(--ink-2); }
+.cmdbox summary { cursor: pointer; }
+.cmd {
+  margin: var(--s2) 0 0;
+  padding: var(--s2) var(--s3);
+  background: var(--surface-sunk);
+  border-radius: var(--r1);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--ink-2);
+}
+
+/* ------------------------------------------------------- header chip buttons */
+
+button.chip { padding: 4px 9px; font-size: 12px; min-width: 34px; }
+button.chip.icon { padding: 0; width: 30px; height: 28px; display: grid; place-items: center; }
+button.chip svg {
+  width: 15px; height: 15px;
+  fill: none; stroke: currentColor; stroke-width: 1.5;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+
+a.quiet { color: var(--ink-muted); font-size: 12px; }
+a.quiet:hover { color: var(--ink-2); }
+
+thead th.nosort { cursor: default; }
+thead th.nosort:hover { color: var(--ink-2); }
+
+/* ------------------------------------------------- distributions in the table
+
+   A single best value said almost nothing about twenty sequences, so each row
+   carries the whole distribution: a kernel density curve for the shape and a rug
+   of the real values underneath, so the curve can be checked against the data.
+   The track is shared by every row; only the end labels are per row.          */
+
+.spark-cell { padding: 5px 10px; }
+
+.spark { width: 104px; }
+
+.spark-svg {
+  display: block;
+  width: 100%;
+  height: 30px;
+  overflow: visible;
+}
+
+/* One series, so one hue: the fill carries the shape and the stroke its edge. */
+.spark-fill { fill: color-mix(in srgb, var(--series-1) 24%, transparent); stroke: none; }
+.spark-line {
+  fill: none;
+  stroke: var(--series-1);
+  stroke-width: 1.1;
+  /* The viewBox is stretched horizontally, so the stroke must not be. */
+  vector-effect: non-scaling-stroke;
+  stroke-linejoin: round;
+}
+
+/* Every measured value. Twenty points can imply a smoothness the data does not
+   have, and these ticks are how that is checked without leaving the cell. */
+.spark-tick {
+  stroke: var(--ink-muted);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.75;
+}
+
+/* The region of the axis that passes, washed in the same hue as the curve: it
+   annotates the scale rather than encoding a second quantity. */
+.spark-pass { fill: color-mix(in srgb, var(--series-1) 8%, transparent); }
+
+/* The cutoff at its true position on the shared axis. */
+.spark-cut {
+  stroke: var(--ink-2);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  stroke-dasharray: none;
+}
+
+/* This row's own minimum and maximum, which is what the ends mean. */
+.spark-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 1px;
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+}
+
+/* ------------------------------------------------------------------ job pages */
+
+.pagehead { display: flex; align-items: flex-start; gap: var(--s4); flex-wrap: wrap; }
+.pagehead > div { flex: 1 1 420px; min-width: 0; }
+.pagehead .btnlink { margin-top: var(--s1); }
+
+.notice { max-width: 76ch; }
+.notice p { margin: 0 0 var(--s2); }
+
+.jobform { margin-bottom: var(--s4); }
+
+.formgrid {
+  display: grid;
+  gap: var(--s4);
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  margin-bottom: var(--s4);
+}
+.formrow { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.formrow > label { font-size: 12px; font-weight: 550; color: var(--ink); }
+
+.formrow input, .formrow select {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r1);
+  padding: 6px 8px;
+  width: 100%;
+}
+.formrow input:focus, .formrow select:focus {
+  outline: 2px solid color-mix(in srgb, var(--series-1) 45%, transparent);
+  outline-offset: -1px;
+  border-color: var(--series-1);
+}
+.formrow input[type="number"] { font-variant-numeric: tabular-nums; }
+
+.fieldnote { font-size: 11.5px; color: var(--ink-muted); line-height: 1.5; }
+.fieldnote code { font-family: var(--mono); font-size: 11px; }
+
+/* A cost warning is a state, so it carries a label and not just a colour. */
+.warnbox:empty { display: none; }
+.warnline {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--warning) 14%, var(--surface));
+  border-left: 2px solid var(--warning);
+  border-radius: 0 var(--r1) var(--r1) 0;
+  padding: var(--s2) var(--s3);
+  margin-bottom: var(--s2);
+}
+
+button.primary {
+  color: #fff;
+  background: var(--series-1);
+  border-color: var(--series-1);
+  font-weight: 550;
+  padding: 7px 18px;
+}
+button.primary:hover { filter: brightness(1.08); color: #fff; }
+button.primary:disabled { opacity: 0.5; cursor: default; filter: none; }
+
+.badge.running { background: color-mix(in srgb, var(--series-1) 14%, var(--surface)); color: var(--series-1); }
+.badge.bad { background: color-mix(in srgb, var(--critical) 13%, var(--surface)); color: var(--critical-text); }
+.badge.warn { background: color-mix(in srgb, var(--warning) 20%, var(--surface)); color: #6b5200; }
+
+.joblist { display: flex; flex-direction: column; }
+.jobrow {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: 9px var(--s1);
+  border-bottom: 1px solid var(--rule);
+  color: inherit;
+}
+.jobrow:last-child { border-bottom: none; }
+.jobrow:hover { text-decoration: none; background: color-mix(in srgb, var(--series-1) 5%, var(--surface)); }
+.jobrow .jid { font-family: var(--mono); font-size: 12.5px; font-weight: 550; }
+.jobrow .spacer { flex: 1; }
+
+.cmdbox { margin-top: var(--s3); font-size: 12px; color: var(--ink-2); }
+.cmdbox summary { cursor: pointer; }
+.cmd {
+  margin: var(--s2) 0 0;
+  padding: var(--s2) var(--s3);
+  background: var(--surface-sunk);
+  border-radius: var(--r1);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--ink-2);
+}
+
+/* ------------------------------------------------------- header chip buttons */
+
+button.chip { padding: 4px 9px; font-size: 12px; min-width: 34px; }
+button.chip.icon { padding: 0; width: 30px; height: 28px; display: grid; place-items: center; }
+button.chip svg {
+  width: 15px; height: 15px;
+  fill: none; stroke: currentColor; stroke-width: 1.5;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+
+a.quiet { color: var(--ink-muted); font-size: 12px; }
+a.quiet:hover { color: var(--ink-2); }
+
+thead th.nosort { cursor: default; }
+thead th.nosort:hover { color: var(--ink-2); }
+
+/* ------------------------------------------------- distributions in the table
+
+   A single best value said almost nothing about twenty sequences, so each row
+   carries the whole distribution. One series, so one colour: the bar height is
+   the count and nothing else is encoded in it. Bin edges are fixed in the
+   script, not derived per row, so the column can be read downwards.           */
+
+.spark-cell { padding: 5px 10px; }
+
+.spark { width: 92px; }
+.spark-plot {
+  position: relative;
+  height: 26px;
+  border-bottom: 1px solid var(--rule);
+}
+.spark-bars {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;                       /* the surface gap between adjacent fills */
+}
+.spark-bin { flex: 1 1 0; min-width: 0; display: flex; align-items: flex-end; }
+.spark-bar {
+  width: 100%;
+  background: var(--series-1);
+  border-radius: 2px 2px 0 0;     /* rounded data-end, square on the baseline */
+}
+
+/* The region of the axis that passes, washed in the same hue as the bars: it
+   annotates the scale rather than encoding a second quantity. */
+.spark-pass {
+  position: absolute;
+  top: 0; bottom: 0;
+  background: color-mix(in srgb, var(--series-1) 9%, transparent);
+}
+/* The cutoff at its true position, not snapped to a bin edge. */
+.spark-cut {
+  position: absolute;
+  top: -2px; bottom: -1px;
+  width: 1px;
+  background: var(--ink-2);
+}
+
+.spark-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 2px;
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-muted);
+}
+
+/* --------------------------------------------- centred cells in the big table
+
+   Asked for: the mixed alignment read as ragged, with right-aligned flags next
+   to left-aligned ids next to fixed-width sparklines. Everything is centred and
+   the digits stay tabular, so a column still lines up within itself.          */
+
+.tablewrap th, .tablewrap td { text-align: center; }
+.tablewrap th.left, .tablewrap td.left { text-align: center; }
+
+/* The two that read worse centred: a sequence is scanned from its start, and a
+   fail reason is a sentence. */
+.tablewrap td.seq, .tablewrap th.seq { text-align: left; }
+.tablewrap td.reason, .tablewrap th.reason { text-align: left; }
+
+.meter { justify-content: center; }
+.meter .count { font-variant-numeric: tabular-nums; min-width: 5.5ch; text-align: left; }
+
+.spark { margin: 0 auto; }
+
+/* ------------------------------------------------------ the interface residues */
+
+td.clickable { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+td.clickable:hover { color: var(--series-1); }
+
+.ifacebox {
+  margin-top: var(--s3);
+  padding: var(--s2) var(--s3);
+  background: var(--surface-sunk);
+  border-radius: var(--r1);
+  font-size: 12px;
+}
+.ifacehead { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s3); align-items: baseline; }
+.ifacerow { display: flex; gap: var(--s2); margin-top: 5px; align-items: baseline; }
+.ifacechain { color: var(--ink-2); white-space: nowrap; min-width: 5.5em; }
+.ifaceres {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--ink);
+  word-spacing: 0.15em;
+}
+
+
+/* ---------------------------------------------------------------- projects */
+
+.cardpath {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-muted);
+  margin: -8px 0 var(--s3);
+}
+.cardnote {
+  font-size: 12px;
+  color: var(--ink-2);
+  margin-top: var(--s3);
+  line-height: 1.6;
+}
+
+/* A project with a name and no results, where the funnel would otherwise be. */
+.emptyproject {
+  padding: var(--s3) 0 var(--s2);
+  border-top: 1px dashed var(--rule);
+  border-bottom: 1px dashed var(--rule);
+}
+.emptytag {
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--ink-2);
+  margin-bottom: 3px;
+}
+
+/* The submit form a project carries, folded away until it is wanted. */
+.submitpanel { margin-bottom: var(--s4); }
+.submitpanel > summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--series-1);
+}
+.submitpanel > summary::marker { color: var(--ink-muted); }
+.submitpanel .jobform { margin-top: var(--s3); }
+
+/* A field the project decided rather than one the form asks for. */
+.fixedvalue {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--surface-sunk);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r1);
+  padding: 6px 8px;
+}
+
+
+/* A checkbox reads as one line with its label, unlike the stacked selects. */
+.controls label.inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.controls label.inline input { margin: 0; cursor: pointer; }
+.controls label.inline:has(input:disabled) { color: var(--ink-muted); cursor: default; }
