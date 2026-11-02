@@ -772,7 +772,9 @@ def test_delivery_table_carries_only_the_delivery_columns():
         import pandas as pd
         cols = set(pd.read_csv(out / "delivery.csv").columns)
         assert cols == {"backbone_id", "folder", "symmetry", "n_res_monomer", "n_seqs",
-                        "n_predictions", "n_interface_evaluated", "success_rate",
+                        "n_predictions", "n_interface_scored", "n_interface_pass",
+                        "interface_success_rate", "best_dG_interface",
+                        "n_interface_files", "success_rate",
                         "best_rmsd", "best_plddt", "final_pass", "final_fail_reason",
                         "best_sequence_id", "best_sequence"}, sorted(cols)
         # the looser cutoffs are recorded, but this table answers the 1.0 A question

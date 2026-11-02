@@ -159,6 +159,11 @@ interface:
   # came in at +7189 and left at -1065, a gap made of small clashes rather than of
   # anything about the design. One restrained cycle costs about 85 seconds.
   relax_cycles: 1
+  # Below this, in REU, the interface counts as usable. The number came from the
+  # group; nothing here calibrated it, and it gates nothing: it decides
+  # interface_pass and the interface success rate, both of which sit beside the
+  # monomer verdict rather than inside it.
+  ddg_cutoff: -25.0
   # The AlphaFold2-multimer prediction this stage used to run is gone, and with it
   # ipTM: the oligomer predictions showed clashes often enough not to be trusted.
   # What that costs is stated in the stage docstring - ipTM was the only number here

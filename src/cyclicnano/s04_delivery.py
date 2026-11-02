@@ -108,7 +108,7 @@ _SEQ_FIELDS = ["seq_index", "sc_pass", "sc_rmsd", "mean_plddt"]
 # ipTM and the multimer confidences used to be here. Stage 05 no longer folds the
 # oligomer, so they are no longer produced; runs that already hold them keep them in
 # tables/sequences.csv, which is never rewritten backwards.
-_INTERFACE_FIELDS = ["dG_interface"]
+_INTERFACE_FIELDS = ["dG_interface", "interface_pass"]
 INTERFACE_DIR = "interface"
 
 
@@ -116,8 +116,10 @@ def _interface_block(row: dict, folder: Path) -> dict | None:
     """The stage-05 measurement for one sequence, or None if it was not evaluated.
 
     This describes the contact between subunits, which nothing in stages 03 and 04
-    looks at: RMSD and pLDDT are both properties of a single chain. It is reported and
-    never filtered on, so a poor interface marks a design rather than removing it.
+    looks at: RMSD and pLDDT are both properties of a single chain. It carries its own
+    verdict against the ddG cutoff, and that verdict is reported beside the monomer
+    one rather than folded into it, so a design can be read as having failed on the
+    fold or on the interface instead of merely as having failed.
     """
     # Through _jsonable first. A sequence that was never evaluated reads back from the
     # table as NaN, and bool(NaN) is True in Python, so the obvious test passes for
@@ -197,7 +199,8 @@ def _write_sequences(group: list[dict], best_id: str | None, backbone_id: str,
 
 
 _SEQ_COLUMNS = ["sequence_id", "seq_index", "sequence", "mpnn_score", "mpnn_global_score",
-                "mean_plddt", "min_plddt", "ptm", "sc_rmsd", "sc_pass"]
+                "mean_plddt", "min_plddt", "ptm", "sc_rmsd", "sc_pass",
+                "dG_interface", "interface_pass"]
 
 
 def run(cfg: Config, state: RunState, force: bool = False, dry_run: bool = False) -> dict:
@@ -225,8 +228,12 @@ def run(cfg: Config, state: RunState, force: bool = False, dry_run: bool = False
         ["final_pass", "success_rate", "best_rmsd"], ascending=[False, False, True])
 
     # Repeated into every sequences.json so a folder states the rule it was judged by.
+    # Two verdicts, so two rules. The monomer pair decides sc_pass and through it
+    # success_rate and final_pass; the ddG cutoff decides interface_pass and the
+    # interface success rate, and gates nothing.
     criteria = {"rmsd_cutoff": float(cfg.get("validate.rmsd_cutoff", 1.0)),
-                "plddt_cutoff": float(cfg.get("validate.plddt_cutoff", 0.0))}
+                "plddt_cutoff": float(cfg.get("validate.plddt_cutoff", 0.0)),
+                "ddg_cutoff": float(cfg.get("interface.ddg_cutoff", -25.0))}
     rows, rank, missing_scores = [], 0, 0
     for record in delivered.to_dict("records"):
         bid = record["backbone_id"]
@@ -270,7 +277,12 @@ def run(cfg: Config, state: RunState, force: bool = False, dry_run: bool = False
             "n_res_monomer": record.get("n_res_monomer"),
             "n_seqs": record.get("n_seqs"),
             "n_predictions": n_pred,
-            "n_interface_evaluated": n_iface,
+            "n_interface_scored": record.get("n_interface_scored"),
+            "n_interface_pass": record.get("n_interface_pass"),
+            # Beside success_rate, never multiplied into it.
+            "interface_success_rate": record.get("interface_success_rate"),
+            "best_dG_interface": record.get("best_dG_interface"),
+            "n_interface_files": n_iface,
             "success_rate": record.get("success_rate"),
             "best_rmsd": best["sc_rmsd"] if best else None,
             # From the same row as best_rmsd and best_sequence_id, so the three cannot

@@ -184,10 +184,11 @@ def test_an_unevaluated_sequence_gets_a_null_block_not_a_block_of_nulls():
              "dG_interface": None}, tmp) is None
 
         scored = {"sequence_id": "x", "interface_scored": True,
-                  "dG_interface": -38.5,
+                  "dG_interface": -38.5, "interface_pass": True,
                   "dSASA_interface": 1849.0}
         block = s04_delivery._interface_block(scored, tmp)
         assert block["dG_interface"] == -38.5
+        assert block["interface_pass"] is True
         assert block["dimer"] is None                 # nothing was copied into the folder
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -197,7 +198,7 @@ def test_the_record_carries_only_the_fields_that_were_asked_for():
     """Trimmed on request. Everything dropped is still in tables/sequences.csv; what
     goes here is what gets read when looking at one design."""
     assert s04_delivery._SEQ_FIELDS == ["seq_index", "sc_pass", "sc_rmsd", "mean_plddt"]
-    assert s04_delivery._INTERFACE_FIELDS == ["dG_interface"]
+    assert s04_delivery._INTERFACE_FIELDS == ["dG_interface", "interface_pass"]
     # the block also names the structure the number was measured on
     block = s04_delivery._interface_block(
         {"interface_scored": True, "dG_interface": -30.0}, Path("."))
@@ -244,8 +245,48 @@ def test_interface_metrics_are_not_part_of_any_rule():
     """The whole point: these describe a design, they do not select one."""
     cfg = _cfg()
     rules = (cfg.get("backbone_filter.rules") or []) + (cfg.get("validate.rules") or [])
-    for metric in ("dG_interface", "dSASA_interface", "dG_dSASA_100"):
+    for metric in ("dG_interface", "interface_pass", "interface_success_rate",
+                   "dSASA_interface", "dG_dSASA_100"):
         assert not any(metric in rule for rule in rules), (metric, rules)
+
+
+def test_the_ddg_cutoff_decides_the_interface_verdict_and_gates_nothing():
+    """Two verdicts, kept apart.
+
+    `sc_pass` is the monomer question and still decides success_rate and through it
+    final_pass. `interface_pass` is the ddG question and decides only itself. Folding
+    the second into the first would make a dropped backbone unreadable: you could no
+    longer tell whether the fold or the interface lost it.
+    """
+    cutoff = -25.0
+    rows = [
+        {"sequence_id": "d1__seq000", "backbone_id": "d1", "dG_interface": -40.0},
+        {"sequence_id": "d1__seq001", "backbone_id": "d1", "dG_interface": -25.0},
+        {"sequence_id": "d1__seq002", "backbone_id": "d1", "dG_interface": -10.0},
+        {"sequence_id": "d1__seq003", "backbone_id": "d1", "dG_interface": None},
+    ]
+    summary = s05_interface.backbone_summary(rows, cutoff)
+    assert len(summary) == 1
+    row = summary[0]
+    # The denominator is what was scored, not all four: the unscored sequence was
+    # already rejected on the monomer, and counting it here would report the monomer
+    # filter a second time under another name.
+    assert row["n_interface_scored"] == 3
+    assert row["n_interface_pass"] == 1               # strictly below, so -25.0 fails
+    assert row["interface_success_rate"] == round(1 / 3, 4)
+    assert row["best_dG_interface"] == -40.0
+
+    # And a backbone whose sequences were all unscored reports None, not zero.
+    empty = s05_interface.backbone_summary(
+        [{"sequence_id": "d2__seq000", "backbone_id": "d2", "dG_interface": None}], cutoff)
+    assert empty[0]["interface_success_rate"] is None
+    assert empty[0]["best_dG_interface"] is None
+
+
+def test_the_cutoff_is_configuration_not_a_constant():
+    """It came from the group rather than from a calibration here, so it moves."""
+    assert _cfg().get("interface.ddg_cutoff") == -25.0
+    assert _cfg("interface.ddg_cutoff=-30").get("interface.ddg_cutoff") == -30
 
 
 def test_the_stage_no_longer_folds_an_oligomer():

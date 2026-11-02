@@ -14,6 +14,9 @@ One measurement:
   backbone, which gives the designed geometry carrying real side chains, and that
   dimer is relaxed under coordinate restraints and scored.
 
+  A sequence counts as having a usable interface below `interface.ddg_cutoff`, -25 REU
+  by default. That number came from the group; nothing here calibrated it.
+
 No GPU is involved. The superposition is linear algebra and the scoring is Rosetta, so
 this stage runs on CPU alone.
 
@@ -120,8 +123,42 @@ def build_dimer(design_pdb: Path, monomer_pdb: Path, out_path: Path,
     return {"dimer_path": str(out_path), "dimer_fit_rmsd": round(max(fits), 3)}
 
 
+def backbone_summary(rows: list[dict], cutoff: float) -> list[dict]:
+    """The per-backbone interface verdict, from the per-sequence energies.
+
+    A second success rate beside the one stage 04 computes, and deliberately beside
+    rather than folded into it: `final_pass` still rests on the monomer alone, so a
+    backbone can be read as having failed on the fold or on the interface instead of
+    merely as having failed.
+
+    The denominator is the sequences that were scored, not all of them. Those that
+    never reached this stage were already rejected on the monomer, and counting them
+    here would report the monomer filter a second time under another name.
+    """
+    per_backbone: dict[str, list[dict]] = {}
+    for row in rows:
+        bid = str(row.get("backbone_id") or str(row["sequence_id"]).split("__", 1)[0])
+        per_backbone.setdefault(bid, []).append(row)
+
+    out = []
+    for bid, group in sorted(per_backbone.items()):
+        scored = [r for r in group if r.get("dG_interface") is not None]
+        passing = [r for r in scored if float(r["dG_interface"]) < cutoff]
+        out.append({
+            "backbone_id": bid,
+            "n_interface_scored": len(scored),
+            "n_interface_pass": len(passing),
+            "interface_success_rate": (round(len(passing) / len(scored), 4)
+                                       if scored else None),
+            "best_dG_interface": (min(float(r["dG_interface"]) for r in scored)
+                                  if scored else None),
+        })
+    return out
+
+
 def run(cfg: Config, state: RunState, runner: Runner, force: bool = False,
         dry_run: bool = False) -> dict:
+    cutoff = float(cfg.get("interface.ddg_cutoff", -25.0))
     relax_cycles = str(int(cfg.get("interface.relax_cycles", 1)))
 
     # As in the other stages: the command is built from paths, so it can be shown on
@@ -212,13 +249,23 @@ def run(cfg: Config, state: RunState, runner: Runner, force: bool = False,
         entry = dict(row)
         entry.update(energies.get(row["sequence_id"], {}))
         entry["interface_scored"] = row["sequence_id"] in energies
+        energy = entry.get("dG_interface")
+        # None rather than False when there is no energy: "not measured" and
+        # "measured and above the cutoff" are different facts, and the delivery
+        # renders them apart.
+        entry["interface_pass"] = (None if energy is None
+                                   else bool(float(energy) < cutoff))
         merged.append(entry)
     state.sequences.upsert(merged)
+    state.backbones.upsert(backbone_summary(merged, cutoff))
 
     n_scored = len(energies)
+    n_pass = sum(1 for r in merged if r.get("interface_pass"))
     if n_scored < n_built:
         print(f"[{STAGE}] WARNING: {n_built - n_scored} dimers have no interface "
               f"energy; see {results}")
-    print(f"[{STAGE}] {n_scored}/{len(rows)} sequences scored")
+    print(f"[{STAGE}] {n_scored}/{len(rows)} sequences scored, "
+          f"{n_pass} below {cutoff} REU")
     state.mark_done(STAGE)
-    return {"n_targets": len(rows), "n_scored": n_scored}
+    return {"n_targets": len(rows), "n_scored": n_scored,
+            "n_interface_pass": n_pass, "ddg_cutoff": cutoff}
