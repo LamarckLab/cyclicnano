@@ -254,8 +254,14 @@ def run(cfg: Config, state: RunState, runner: Runner, force: bool = False,
                                "--relax-cycles", relax_cycles],
                    check=False)         # a structure Rosetta chokes on must not end the run
 
+    # Only when Rosetta was actually asked. The results file survives a previous
+    # run, so reading it unconditionally counted energies carried over from the
+    # table as having been computed here, and the log said "43 this run" about a
+    # run that invoked Rosetta zero times. Nothing is lost by not reading it: a
+    # sequence whose energy is in the table was reused above, and one whose is
+    # not had its dimer built, which is what makes n_built non-zero.
     energies = {}
-    if results.exists():
+    if n_built and results.exists():
         for line in results.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue

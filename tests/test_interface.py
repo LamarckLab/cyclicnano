@@ -354,7 +354,11 @@ def test_an_energy_already_on_disk_is_not_recomputed():
         # design_1 and design_2 passed stage 04 and have two passing sequences
         # each; seq000 carries an energy and seq002 carries one too.
         assert "already had an energy" in log, log
-        assert out["n_new"] == 0                      # Rosetta was not called
+        # Rosetta was not called, and the count says so. The results file from a
+        # previous run survives on disk, and reading it regardless made the log
+        # claim 43 energies were computed by a run that invoked Rosetta zero
+        # times.
+        assert out["n_new"] == 0
         assert out["n_scored"] == 4
         # The cutoff was re-read, so -40 passes and -20 no longer does.
         assert out["n_interface_pass"] == 2
