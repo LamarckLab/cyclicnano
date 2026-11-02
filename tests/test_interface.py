@@ -321,3 +321,48 @@ def test_the_stage_no_longer_folds_an_oligomer():
     assert "iptm" in doc and "clash" in doc
 
 
+def test_an_energy_already_on_disk_is_not_recomputed():
+    """The relax is the expensive half, about a minute and a half a structure.
+
+    Re-running stage 05 to apply a changed cutoff would otherwise spend hours
+    reproducing numbers that are already in the table. Measured on the real runs
+    that is 371 sequences, so `--stages 05 --force` has to re-read the cutoff and
+    send only the unscored sequences to Rosetta.
+    """
+    import contextlib
+    import io
+
+    from cyclicnano.manifest import RunState
+
+    tmp = Path(tempfile.mkdtemp(prefix="cyclicnano_iface_"))
+    try:
+        cfg = _cfg(f"run.outdir={tmp.as_posix()}", "backend.kind=local",
+                   "interface.ddg_cutoff=-30")
+        state = RunState(cfg.outdir)
+        backbones, sequences = _frames()
+        backbones["backbone_path"] = ""
+        # Energies as a previous stage 05 left them, either side of the new cutoff.
+        sequences["dG_interface"] = [-40.0, None, -20.0] * 4
+        state.backbones.upsert(backbones.to_dict("records"))
+        state.sequences.upsert(sequences.to_dict("records"))
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            out = s05_interface.run(cfg, state, Runner(dry_run=True))
+        log = buf.getvalue()
+
+        # design_1 and design_2 passed stage 04 and have two passing sequences
+        # each; seq000 carries an energy and seq002 carries one too.
+        assert "already had an energy" in log, log
+        assert out["n_new"] == 0                      # Rosetta was not called
+        assert out["n_scored"] == 4
+        # The cutoff was re-read, so -40 passes and -20 no longer does.
+        assert out["n_interface_pass"] == 2
+        assert out["ddg_cutoff"] == -30
+
+        table = state.sequences.load().set_index("sequence_id")
+        assert bool(table.loc["design_1__seq000", "interface_pass"]) is True
+        assert bool(table.loc["design_1__seq002", "interface_pass"]) is False
+        assert bool(table.loc["design_1__seq000", "interface_scored"]) is True
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)

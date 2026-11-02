@@ -189,16 +189,34 @@ def run(cfg: Config, state: RunState, runner: Runner, force: bool = False,
     print(f"[{STAGE}] {len(rows)} sequences from "
           f"{len({r['backbone_id'] for r in rows})} backbones, CPU only")
 
+    # A sequence that already has an energy is not scored again. The relax is the
+    # expensive half of this stage, about a minute and a half a structure, and
+    # re-running it to apply a changed cutoff to numbers already on disk would
+    # cost hours to produce the same energies. So `--stages 05 --force` re-reads
+    # the cutoff cheaply and sends only the unscored sequences to Rosetta.
+    existing = {}
+    if "dG_interface" in sequences.columns:
+        for row in sequences.to_dict("records"):
+            energy = row.get("dG_interface")
+            if energy is None or energy != energy:          # NaN
+                continue
+            existing[row["sequence_id"]] = float(energy)
+
     # The energy is measured on the designed geometry: two copies of the monomer
     # stage 03 predicted, placed at two adjacent subunit positions of the backbone
     # that was designed.
     bb_path = dict(zip(backbones["backbone_id"], backbones["backbone_path"]))
     mono_path = dict(zip(sequences["sequence_id"], sequences.get("pred_path", [])))
-    scored, n_built = [], 0
+    scored, n_built, n_kept = [], 0, 0
     for row in rows:
         sid = row["sequence_id"]
         bid = sid.split("__", 1)[0]
         entry = {"sequence_id": sid, "backbone_id": row.get("backbone_id", bid)}
+        if sid in existing:
+            entry["dG_interface"] = existing[sid]
+            n_kept += 1
+            scored.append(entry)
+            continue
         design, monomer = bb_path.get(bid), mono_path.get(sid)
         if not design or not monomer or not Path(str(monomer)).exists():
             entry["dimer_error"] = "no stage 03 prediction for this sequence"
@@ -212,6 +230,8 @@ def run(cfg: Config, state: RunState, runner: Runner, force: bool = False,
         except Exception as exc:                            # one bad pair is not a run
             entry["dimer_error"] = f"{type(exc).__name__}: {exc}"
         scored.append(entry)
+    if n_kept:
+        print(f"[{STAGE}] {n_kept} sequences already had an energy, kept as they are")
     print(f"[{STAGE}] {n_built}/{len(rows)} design-geometry dimers built")
 
     # Rosetta runs in its own environment, so the structures go over as a manifest and
@@ -248,8 +268,11 @@ def run(cfg: Config, state: RunState, runner: Runner, force: bool = False,
     for row in scored:
         entry = dict(row)
         entry.update(energies.get(row["sequence_id"], {}))
-        entry["interface_scored"] = row["sequence_id"] in energies
         energy = entry.get("dG_interface")
+        # Scored means "has an energy", from this run or an earlier one. Testing
+        # only this run's results would mark every sequence carried over from a
+        # previous stage 05 as unevaluated and throw away its number.
+        entry["interface_scored"] = energy is not None
         # None rather than False when there is no energy: "not measured" and
         # "measured and above the cutoff" are different facts, and the delivery
         # renders them apart.
@@ -259,13 +282,16 @@ def run(cfg: Config, state: RunState, runner: Runner, force: bool = False,
     state.sequences.upsert(merged)
     state.backbones.upsert(backbone_summary(merged, cutoff))
 
-    n_scored = len(energies)
+    # Two counts, because they answer different questions: how many Rosetta
+    # returned this time, and how many sequences now hold an energy at all.
+    n_new = len(energies)
+    n_scored = sum(1 for r in merged if r.get("interface_scored"))
     n_pass = sum(1 for r in merged if r.get("interface_pass"))
-    if n_scored < n_built:
-        print(f"[{STAGE}] WARNING: {n_built - n_scored} dimers have no interface "
+    if n_new < n_built:
+        print(f"[{STAGE}] WARNING: {n_built - n_new} dimers have no interface "
               f"energy; see {results}")
-    print(f"[{STAGE}] {n_scored}/{len(rows)} sequences scored, "
+    print(f"[{STAGE}] {n_scored}/{len(rows)} sequences scored ({n_new} this run), "
           f"{n_pass} below {cutoff} REU")
     state.mark_done(STAGE)
-    return {"n_targets": len(rows), "n_scored": n_scored,
+    return {"n_targets": len(rows), "n_scored": n_scored, "n_new": n_new,
             "n_interface_pass": n_pass, "ddg_cutoff": cutoff}
