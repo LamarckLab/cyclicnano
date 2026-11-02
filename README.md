@@ -40,9 +40,23 @@ is the application; cyclic oligomer design is the tool.
 02  design      ProteinMPNN, tied positions          ->  M sequences per backbone
 03  fold        AlphaFold2 monomer, single-sequence  ->  predicted structures
 04  validate    CA RMSD vs design, success rate      ->  ranked backbones
+05  interface   Rosetta dG on the designed dimer      ->  interface verdict
 ```
 
-Stages 05-08 (fusion search, icosahedral assembly, junction redesign, reporting) are
+Stage 05 runs on CPU alone and carries its own verdict: a sequence has a usable
+interface below `interface.ddg_cutoff`, -25 REU by default. That verdict stays beside
+the monomer one rather than inside it, so `final_pass` still rests on RMSD and pLDDT
+and a dropped backbone can be read as having failed on the fold or on the interface
+instead of merely as having failed.
+
+It used to fold the whole oligomer with AlphaFold2-multimer for an ipTM. That was
+dropped because the multimer predictions showed clashes often enough not to be
+trusted. The removal costs something and the stage docstring says so: ipTM was the
+only number here that asked whether the sequence assembles at all, and dG asks the
+narrower question of whether the designed interface scores well on a geometry that is
+assumed rather than predicted.
+
+Stages 06-09 (fusion search, icosahedral assembly, junction redesign, reporting) are
 not implemented yet. See [Status](#status).
 
 ## Design principles
@@ -131,17 +145,27 @@ runs/<name>/
 ├── tables/
 │   ├── backbones.csv        one row per backbone, all metrics, pass flags, rankings
 │   └── sequences.csv        one row per designed sequence, RMSD and pLDDT
-├── 00_backbones/            RFdiffusion output, one PDB per backbone
+├── 00_backbones/            design_N_bb.pdb, one per backbone
 ├── 01_backbone_filter/
 │   ├── filter_summary.json  the rules, and the rejection count of each
 │   └── passed/              the backbones that survived; stage 02 reads this
 ├── 02_sequences/            design_N_mpnn_seqs.fa, one per backbone
-├── 03_predictions/          two files per sequence: AlphaFold2 PDB and scores
+├── 03_predictions/
+│   └── design_N/            per sequence: seqNNN_af2.pdb, seqNNN_af2_scores.json
 ├── 04_delivery/
 │   ├── delivery.csv         one row per backbone: success rate, best RMSD, verdict
-│   └── <backbone_id>/       backbone, every sequence, every prediction
+│   ├── delivery.json        the same table, plus what the web UI reads
+│   ├── passed/<rank>_<id>/  the backbone, its sequences.json, predictions, interface
+│   └── below_cutoff/<id>/   the same, for a backbone whose success rate missed
+├── 05_interface/
+│   └── design_N/            per sequence: the built dimer and its relaxed form
 └── logs/commands.jsonl      every subprocess, its exit code and its runtime
 ```
+
+Each folder under `04_delivery/` is self-contained: the design backbone, every
+prediction, the interface structures and a `sequences.json` naming them by relative
+path. That is what makes a delivery folder forwardable on its own, and what the web
+browser reads.
 
 Self-consistency scoring has no directory. It writes columns on the backbone table,
 and the ranked view of those columns is `delivery.csv`; a second ranking file would
@@ -155,6 +179,34 @@ the reader.
 `backbones.csv` is the artifact to keep. It holds every metric for every candidate,
 including the rejected ones, which is what makes a filter ablation possible after the
 run rather than requiring a second one.
+
+## Web browser
+
+A page over the output directory: the funnel of each run, the delivery table with the
+RMSD, pLDDT and ddG distributions of every backbone's sequences, the structures in
+Mol*, the sequences as a FASTA or a spreadsheet, and optionally a form that starts a
+run. English by default, with a Chinese toggle that leaves the technical terms alone.
+Details in [docs/webui.md](docs/webui.md).
+
+```bash
+pip install -e ".[webui]"
+python -m cyclicnano.webui.fetch_vendor          # once: the Mol* bundle
+
+# read-only
+python -m cyclicnano.webui --root runs --port 8080
+
+# read-only plus the submit form
+python -m cyclicnano.webui --root runs --port 8080     --allow-submit --profile configs/profiles/amax.yaml
+```
+
+Read-only by default: without `--allow-submit` no route starts a stage, touches a GPU
+or writes into the output tree, so the page cannot disturb a run in progress. With the
+flag it runs one job at a time, validates every field against a declared range, builds
+the command as a list rather than a shell string, and cancels by signalling the job's
+process group, because the pipeline's children are what hold a card.
+
+**There is no authentication**, which is deliberate for a service on a lab network and
+wrong for anything else. Do not put it on a public address.
 
 ## Two traps this package handles for you
 
@@ -174,7 +226,7 @@ either nothing or unrelated hits, and the resulting confidence is not meaningful
 ## Testing
 
 ```bash
-pytest                     # 169 checks
+pytest                     # 232 checks
 python tests/run_all.py    # same suite without pytest
 ```
 
@@ -213,17 +265,19 @@ design self-consistent at 2.0 angstrom, but no measurement or experimental outco
 sets them. Treat them as a starting point.
 
 **Only the monomer is validated.** AlphaFold2 folds a single chain, so a passing
-design is one whose sequence encodes the designed subunit fold. Nothing here tests
-that copies of it assemble into the ring; that question is left to experiment.
+design is one whose sequence encodes the designed subunit fold. Stage 05 adds two
+numbers about the interface, but they rank nothing and gate nothing, so the verdict
+still rests on the monomer alone. Nothing here tests that copies of it assemble into
+the ring; that question is left to experiment.
 
 ## Status
 
-Implemented and tested: stages 00-04, the filter engine, the run manifest, and the
-conda backend.
+Implemented and tested: stages 00-05, the filter engine, the run manifest, the conda
+backend, and the read-only web browser.
 
 Not yet implemented:
 
-- **Stages 05-08** - fusion search, icosahedral assembly with clash and closure
+- **Stages 06-09** - fusion search, icosahedral assembly with clash and closure
   checks, junction redesign, HTML reporting.
 - **Container images** - the backend abstraction already covers Docker and Apptainer;
   the images themselves are not built yet.
