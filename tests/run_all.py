@@ -16,8 +16,8 @@ from pathlib import Path
 import conftest  # noqa: F401  (sets up sys.path as a side effect)
 
 MODULES = ["test_pdbio", "test_geometry", "test_filters", "test_config",
-           "test_manifest", "test_pipeline", "test_real_data", "test_interface",
-           "test_webui", "test_webui_jobs", "test_webui_http"]
+           "test_manifest", "test_assembly", "test_pipeline", "test_real_data",
+           "test_interface", "test_webui", "test_webui_jobs", "test_webui_http"]
 
 
 def main() -> int:

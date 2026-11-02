@@ -287,6 +287,24 @@ def _find_folder(base: Path, backbone_id: str) -> str:
     raise NotFound(f"no such backbone: {backbone_id}")
 
 
+def _chain_ids(path: Path) -> list[str]:
+    """The chain ids of a PDB, in the order they first appear.
+
+    Column 22, read straight off the atom records. RFdiffusion writes a cyclic
+    oligomer in ring order, so the count is the number of subunits the design
+    asks for and the order is the ring - both of which the page needs to say
+    "pentamer" rather than "oligomer".
+    """
+    seen = []
+    with path.open(encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if line.startswith(("ATOM", "HETATM")) and len(line) > 21:
+                cid = line[21]
+                if cid not in seen:
+                    seen.append(cid)
+    return seen
+
+
 def backbone(root: Path | str, run: str, backbone_id: str) -> dict:
     """One backbone: its delivery row, its sequences, and what can be viewed.
 
@@ -309,11 +327,20 @@ def backbone(root: Path | str, run: str, backbone_id: str) -> dict:
     # belongs to, and whether it is in the designed coordinate frame; the label and
     # the explanation are the page's business, and the page has two languages.
     design = f"{detail['backbone_id']}_bb.pdb"
+    design_rel = f"{folder}/{design}"
+    subunits = (_chain_ids(base / folder / design)
+                if (base / folder / design).is_file() else [])
     structures = []
+    # Listed on the strength of the file being there, not of this reader having
+    # understood it: a design backbone is the pipeline's own output and the
+    # viewer can be left to parse it. Only the assembled ring needs the chain
+    # count, so only the ring is withheld when it comes back empty.
     if (base / folder / design).is_file():
         structures.append({
             "key": "backbone",
-            "path": f"{folder}/{design}",
+            "path": design_rel,
+            "source": None,
+            "n_chains": len(subunits) or None,
             "sequence_id": None,
             "seq_short": None,
             "design_frame": True,
@@ -330,15 +357,37 @@ def backbone(root: Path | str, run: str, backbone_id: str) -> dict:
 
         sid = str(seq.get("sequence_id", ""))
         short = sid.split("__", 1)[-1] if "__" in sid else sid
-        for rel, key, design_frame in (
-            (seq.get("prediction"), "monomer", False),
-            (iface.get("dimer"), "dimer", True),
+        prediction = seq.get("prediction")
+        # The whole ring for this sequence, built on request from the prediction
+        # and the design backbone rather than stored: it is the one structure
+        # here that no stage produces, and a file per sequence per subunit would
+        # be tens of megabytes of something derivable in milliseconds. The path
+        # is a name for the selection and for a download, and no file is behind
+        # it; `source` is what the route is actually given.
+        if prediction and len(subunits) > 1 and (base / folder / prediction).is_file():
+            structures.append({
+                "key": "oligomer",
+                "path": f"{folder}/{Path(prediction).stem}_C{len(subunits)}.pdb",
+                "source": f"{folder}/{prediction}",
+                "design": design_rel,
+                "n_chains": len(subunits),
+                "sequence_id": sid,
+                "seq_short": short,
+                "design_frame": True,
+                "missing": False,
+            })
+
+        for rel, key, design_frame, n_chains in (
+            (prediction, "monomer", False, 1),
+            (iface.get("dimer"), "dimer", True, 2),
         ):
             if not rel:
                 continue
             structures.append({
                 "key": key,
                 "path": f"{folder}/{rel}",
+                "source": None,
+                "n_chains": n_chains,
                 "sequence_id": sid,
                 "seq_short": short,
                 "design_frame": design_frame,

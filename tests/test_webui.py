@@ -251,27 +251,68 @@ def test_interface_metrics_are_lifted_out_of_their_block():
 
 
 def test_the_viewable_structures_are_the_ones_the_pipeline_named():
-    """Three kinds: the design backbone, and per sequence a monomer and a dimer.
+    """Four kinds: the design backbone, and per sequence a ring, a monomer and a dimer.
 
-    They are read out of `sequences.json` rather than globbed, because that file is
-    the pipeline's statement of which structure belongs to which sequence. A sequence
-    with no interface block contributes no interface structure, and the oligomer
-    prediction is gone along with ipTM.
+    The file-backed ones are read out of `sequences.json` rather than globbed, because
+    that file is the pipeline's statement of which structure belongs to which sequence.
+    A sequence with no interface block contributes no interface structure, and the
+    oligomer *prediction* is gone along with ipTM - the ring listed here is assembled
+    from the monomer on request and is not a prediction of anything.
     """
     with outputs() as root:
         detail = store.backbone(root, "c5", "design_27")
         assert [(s["key"], s["sequence_id"]) for s in detail["structures"]] == [
             ("backbone", None),
+            ("oligomer", "design_27__seq000"),
             ("monomer", "design_27__seq000"),
             ("dimer", "design_27__seq000"),
+            ("oligomer", "design_27__seq001"),
             ("monomer", "design_27__seq001"),
         ]
         assert not any(s["key"] == "multimer" for s in detail["structures"])
         # Which of them are in the designed coordinate frame, which is what the note
         # under the viewer has to get right.
         assert {s["key"]: s["design_frame"] for s in detail["structures"]} == {
-            "backbone": True, "monomer": False, "dimer": True}
+            "backbone": True, "oligomer": True, "monomer": False, "dimer": True}
+        assert {s["key"]: s["n_chains"] for s in detail["structures"]} == {
+            "backbone": 5, "oligomer": 5, "monomer": 1, "dimer": 2}
         assert all(not s["missing"] for s in detail["structures"])
+
+
+def test_the_assembled_ring_names_the_two_files_it_is_built_from():
+    """It has no file of its own, so `source` is what the route is given.
+
+    `path` is a name and nothing else: it identifies the selection and titles a
+    download, and resolving it as a file would fail. Everything with a file behind
+    it says `source: None`, so one page-side rule tells the two apart.
+    """
+    with outputs() as root:
+        detail = store.backbone(root, "c5", "design_27")
+        ring = next(s for s in detail["structures"] if s["key"] == "oligomer")
+        assert ring["path"] == "passed/1_design_27/seq000_af2_C5.pdb"
+        assert not (root / "c5" / store.DELIVERY / ring["path"]).exists()
+        assert ring["source"] == "passed/1_design_27/predictions/seq000_af2.pdb"
+        assert ring["design"] == "passed/1_design_27/design_27_bb.pdb"
+        for named in (ring["source"], ring["design"]):
+            assert store.resolve(root, "c5", named).is_file()
+        assert all(s["source"] is None
+                   for s in detail["structures"] if s["key"] != "oligomer")
+
+
+def test_a_single_chain_design_has_no_ring_to_assemble():
+    """A one-chain backbone is one subunit, and one subunit is the monomer already.
+
+    The guard is the chain count of the file, not the declared symmetry: the count
+    is what an assembly would actually be built from.
+    """
+    with outputs() as root:
+        folder = root / "c5" / store.DELIVERY / "passed" / "1_design_27"
+        write_pdb(str(folder / "design_27_bb.pdb"),
+                  extract_monomer(synthetic.cyclic_oligomer(n_sym=5, per_helix=10,
+                                                            n_helices=2)))
+        detail = store.backbone(root, "c5", "design_27")
+        assert not any(s["key"] == "oligomer" for s in detail["structures"])
+        assert [s["key"] for s in detail["structures"]][0] == "backbone"
 
 
 def test_a_path_the_manifest_names_but_disk_lacks_is_reported_missing():

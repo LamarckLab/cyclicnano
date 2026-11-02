@@ -139,6 +139,22 @@ const fileURL = (run, path, download) =>
   `/api/runs/${encodeURIComponent(run)}/file?path=${encodeURIComponent(path)}` +
   (download ? '&download=1' : '');
 
+const assemblyURL = (run, source, design, download) =>
+  `/api/runs/${encodeURIComponent(run)}/assembly`
+  + `?path=${encodeURIComponent(source)}&design=${encodeURIComponent(design)}`
+  + (download ? '&download=1' : '');
+
+/** Where to fetch one structure from.
+ *
+ *  Most of them are files in the delivery folder. The ring is not: it is built
+ *  per request from the two files `source` and `design` name, and its `path` is
+ *  only a name - for the selection, and for what a download is called. One
+ *  helper, so no caller has to know which kind it is holding.
+ */
+const structURL = (s, download) =>
+  (s.source ? assemblyURL(state.run, s.source, s.design, download)
+            : fileURL(state.run, s.path, download));
+
 const short = (id) => (id || '').split('__').pop() || t('none');
 
 /* ------------------------------------------------------- mini distributions */
@@ -913,7 +929,7 @@ function selectSequence(sequenceId) {
   const current = currentStructure();
   // Keep looking at the same kind of structure for the newly chosen sequence.
   const same = current ? mine.find((s) => s.key === current.key) : null;
-  const pick = same || mine.find((s) => s.key === 'monomer') || mine[0];
+  const pick = same || preferred(mine);
   state.structPath = pick ? pick.path : state.structPath;
   paintDetail();
   showStructure();
@@ -922,8 +938,21 @@ function selectSequence(sequenceId) {
 function defaultStructure() {
   const structures = (state.detail.structures || []).filter((s) => !s.missing);
   const mine = structures.filter((s) => s.sequence_id === state.seqId);
-  const pick = mine.find((s) => s.key === 'monomer') || mine[0] || structures[0];
+  const pick = preferred(mine) || structures[0];
   return pick ? pick.path : null;
+}
+
+/** Which of one sequence's structures to show when nothing else was asked for.
+ *
+ *  The assembly, then the single chain it was built from, then whatever there
+ *  is. A sequence exists to make a ring, so the ring is the thing to open on;
+ *  before it was buildable this defaulted to the monomer, which showed the
+ *  subunit and left the point of the design off screen.
+ */
+function preferred(structures) {
+  return structures.find((s) => s.key === 'oligomer')
+      || structures.find((s) => s.key === 'monomer')
+      || structures[0] || null;
 }
 
 /* ------------------------------------------------------------- the structure
@@ -1007,7 +1036,19 @@ let viewerError = null;
 const currentStructure = () =>
   (state.detail.structures || []).find((s) => s.path === state.structPath) || null;
 
-const structLabel = (s) => (s.seq_short ? `${s.seq_short} · ` : '') + t('struct.' + s.key);
+const structLabel = (s) => (s.seq_short ? `${s.seq_short} · ` : '') + structKind(s);
+
+/** What kind of structure this is, in words.
+ *
+ *  The ring is named by its subunit count, because "pentamer" and "trimer" are
+ *  what the designs are called in conversation and "oligomer" is what nobody
+ *  says. A count with no name of its own falls back to the number.
+ */
+function structKind(s) {
+  if (s.key !== 'oligomer') return t('struct.' + s.key);
+  const named = `struct.oligomer.${s.n_chains}`;
+  return has(named) ? t(named) : t('struct.oligomer', s.n_chains);
+}
 
 /** Whether a colouring can say anything about this structure.
  *
@@ -1076,7 +1117,7 @@ function links() {
   const current = currentStructure();
   const seq = (state.detail.sequences || []).find((s) => s.sequence_id === state.seqId);
   return [
-    current ? el('a', {href: fileURL(state.run, current.path, true),
+    current ? el('a', {href: structURL(current, true),
                        text: t('viewer.download', current.path.split('/').pop())}) : null,
     seq ? el('a', {href: '#', onclick(e) {
       e.preventDefault();
@@ -1322,7 +1363,7 @@ async function showStructure() {
   }
   if (currentStructure() !== current) return;          // a faster click won
 
-  const url = new URL(fileURL(state.run, current.path), location.href).href;
+  const url = new URL(structURL(current, false), location.href).href;
   const label = current.path.split('/').pop();
   const theme = (COLOR_THEMES.find((th) => th.key === state.colorMode)
                  || COLOR_THEMES[0]).theme;

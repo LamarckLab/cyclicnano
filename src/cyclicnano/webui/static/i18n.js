@@ -224,11 +224,20 @@ const STRINGS = {
     'viewer.missing': ' (file missing)',
     'struct.backbone': 'design backbone',
     'struct.monomer': 'AF2 monomer',
+    'struct.oligomer': '{0}-mer, design geometry',
+    'struct.oligomer.3': 'trimer, design geometry',
+    'struct.oligomer.5': 'pentamer, design geometry',
     'struct.dimer': 'relaxed dimer',
     'note.backbone': 'The filtered RFdiffusion backbone: main chain only, no side chains.',
     'note.monomer': 'The no-MSA monomer prediction. The B-factor column holds pLDDT. '
       + 'AlphaFold2 writes its own coordinate frame, so this does not sit on the '
       + 'design backbone and the RMSD is measured after superposition.',
+    'note.oligomer': 'The monomer prediction placed on every subunit of the design '
+      + 'backbone, assembled here for viewing. Rigid-body superposition with no '
+      + 'relaxation, so neighbouring subunits may clash. Nothing in this pipeline '
+      + 'predicts the assembly: this is the geometry the design asks for, carrying '
+      + 'the side chains the sequence implies, and not evidence that the sequence '
+      + 'assembles into it.',
     'note.dimer': 'Two copies of the monomer prediction superposed onto chains A and B '
       + 'of the design backbone, then relaxed under restraints. {0} is measured here, '
       + 'so it describes the interface that was designed. The relax displaces the whole '
@@ -495,10 +504,17 @@ const STRINGS = {
     'viewer.missing': '（文件缺失）',
     'struct.backbone': '设计骨架',
     'struct.monomer': 'AF2 单体预测',
+    'struct.oligomer': '{0} 聚体（设计几何）',
+    'struct.oligomer.3': '三聚体（设计几何）',
+    'struct.oligomer.5': '五聚体（设计几何）',
     'struct.dimer': 'relax 后的二聚体',
     'note.backbone': 'RFdiffusion 生成并通过过滤的骨架，只有主链，没有侧链。',
     'note.monomer': '无 MSA 的单体预测，B 因子列装的是 pLDDT。AlphaFold2 用自己的坐标系'
       + '输出，所以它不落在设计骨架上，RMSD 是叠合之后才算的。',
+    'note.oligomer': '把单体预测按设计骨架的每个亚基位置摆一份，在这里拼成整体。'
+      + '只做刚体叠合、没有 relax，相邻亚基之间可能有碰撞。流水线里没有任何一步'
+      + '预测聚体：这是设计要求的几何，带上该序列对应的侧链，不构成该序列真能组装'
+      + '成这个样子的证据。',
     'note.dimer': '把单体预测叠到设计骨架的 A、B 两条链上，再做带约束的 relax。'
       + '{0} 就是在这个结构上算的，所以它量的是设计出来的那个界面。relax 会把整体'
       + '平移旋转 2～3 Å，但内部几何只变 0.8 Å、两链间距变化不到 1 Å'

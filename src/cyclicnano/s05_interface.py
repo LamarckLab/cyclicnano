@@ -72,26 +72,6 @@ def targets(backbones, sequences) -> list[dict]:
     return rows.to_dict("records")
 
 
-def _transformed_atoms(pdb_path: Path, rot, shift, chain_id: str) -> list[str]:
-    """Every ATOM line of a file, moved by (rot, shift) and relabelled to one chain.
-
-    The transform is derived from CA positions but applied to the raw text, because
-    the PDB reader keeps only the backbone and the side chains are the entire point:
-    Rosetta cannot score an interface made of glycine, and an AlphaFold monomer is the
-    only place in this pipeline where real side chains exist.
-    """
-    import numpy as np
-
-    out = []
-    for line in pdb_path.read_text(encoding="utf-8").splitlines(keepends=True):
-        if not line.startswith("ATOM"):
-            continue
-        xyz = np.array([float(line[30:38]), float(line[38:46]), float(line[46:54])])
-        x, y, z = xyz @ rot.T + shift
-        out.append(f"{line[:21]}{chain_id}{line[22:30]}{x:8.3f}{y:8.3f}{z:8.3f}{line[54:]}")
-    return out
-
-
 def build_dimer(design_pdb: Path, monomer_pdb: Path, out_path: Path,
                 pair: tuple[str, str] = ("A", "B")) -> dict:
     """Place two copies of the predicted monomer at two adjacent subunit positions.
@@ -99,28 +79,17 @@ def build_dimer(design_pdb: Path, monomer_pdb: Path, out_path: Path,
     RFdiffusion writes a cyclic oligomer in ring order, so chains A and B are
     neighbours; measured on real backbones they sit 5.4 A apart while A-C and A-D are
     at 11.3 A. That is unlike a prediction, where the chain labels are arbitrary.
+
+    Two subunits and not the whole ring because this is what Rosetta scores: one
+    interface, between one pair. The ring itself is assembled by `assembly` for
+    anyone looking at it.
     """
-    from .geometry import kabsch, rmsd
-    from .pdbio import read_pdb
+    from .assembly import place_monomer
 
-    design = read_pdb(str(design_pdb))
-    monomer = read_pdb(str(monomer_pdb))
-    mono = monomer.chains[monomer.chain_ids[0]]
-
-    fits, lines = [], []
-    for target, label in zip(pair, ("A", "B")):
-        if target not in design.chains:
-            raise ValueError(f"{design_pdb} has no chain {target}")
-        anchor = design.chains[target].ca
-        n = min(len(mono.ca), len(anchor))
-        rot, shift = kabsch(mono.ca[:n], anchor[:n])
-        fits.append(rmsd(mono.ca[:n] @ rot.T + shift, anchor[:n], superpose=False))
-        lines += _transformed_atoms(monomer_pdb, rot, shift, label)
-        lines.append("TER\n")
-
+    built = place_monomer(design_pdb, monomer_pdb, list(zip(pair, ("A", "B"))))
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text("".join(lines) + "END\n", encoding="utf-8")
-    return {"dimer_path": str(out_path), "dimer_fit_rmsd": round(max(fits), 3)}
+    out_path.write_text(built["pdb"], encoding="utf-8")
+    return {"dimer_path": str(out_path), "dimer_fit_rmsd": built["fit_rmsd"]}
 
 
 def backbone_summary(rows: list[dict], cutoff: float) -> list[dict]:

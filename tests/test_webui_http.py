@@ -130,6 +130,47 @@ def test_a_structure_is_viewed_as_text_and_saved_as_a_pdb():
         assert saved.headers["cache-control"] == "no-store"
 
 
+def test_the_ring_is_assembled_on_request_and_not_read_off_disk():
+    """It has no file, so the route is given the two files it is built from.
+
+    Both go through the same resolution as any other path, which is what keeps a
+    browser from pairing something outside the delivery folder. The result is a
+    structure the viewer can load directly and a save can name.
+    """
+    if _unavailable():
+        return
+    with outputs() as root:
+        c = client_for(root)
+        source = "passed/1_design_27/predictions/seq000_af2.pdb"
+        design = "passed/1_design_27/design_27_bb.pdb"
+
+        shown = c.get("/api/runs/c5/assembly", params={"path": source, "design": design})
+        assert shown.status_code == 200
+        assert shown.headers["content-type"].startswith("text/plain")
+        assert shown.headers["cache-control"] == "no-store"
+        chains = {line[21] for line in shown.text.splitlines() if line.startswith("ATOM")}
+        assert chains == {"A", "B", "C", "D", "E"}
+
+        # Five copies of the one-chain prediction, so five times its atoms.
+        monomer = c.get("/api/runs/c5/file", params={"path": source}).text
+        n_atoms = sum(1 for line in monomer.splitlines() if line.startswith("ATOM"))
+        assert sum(1 for line in shown.text.splitlines()
+                   if line.startswith("ATOM")) == 5 * n_atoms
+
+        saved = c.get("/api/runs/c5/assembly",
+                      params={"path": source, "design": design, "download": 1})
+        assert saved.headers["content-type"] == "application/octet-stream"
+        assert 'filename="seq000_af2_C5.pdb"' in saved.headers["content-disposition"]
+        assert saved.text == shown.text
+
+        # Neither path may leave the run, and neither may name something that is
+        # not a structure.
+        for bad in ({"path": "../../../etc/passwd", "design": design},
+                    {"path": source, "design": "../../secret.pdb"},
+                    {"path": "manifest.json", "design": design}):
+            assert c.get("/api/runs/c5/assembly", params=bad).status_code in (403, 404)
+
+
 def test_the_export_route_hands_over_a_named_file():
     """It exists to hand a sheet to whoever orders the synthesis.
 

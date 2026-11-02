@@ -159,7 +159,7 @@ async function everyRouteRenders() {
 /* ----------------------------------------------------- the structure page */
 
 async function theStructurePageWorks() {
-  console.log('\n  the structure page: its columns, and what clicking ddG does');
+  console.log('\n  the structure page: its columns, and what a row and a ddG cell show');
   const out = await page('#/c5/design_27');
   const {view, window} = out;
   const chosen = () => {
@@ -173,6 +173,11 @@ async function theStructurePageWorks() {
         `sequence columns are named plainly, got ${JSON.stringify(headers)}`);
   check(view.querySelectorAll('tbody tr.selected').length === 1,
         'exactly one sequence is selected');
+
+  // What a sequence is for. The monomer is a click away in the same select; it
+  // is not what the page opens on.
+  check(/pentamer|trimer|-mer/.test(chosen()),
+        `the page opens on the assembly, got ${JSON.stringify(chosen())}`);
 
   const ddg = [...view.querySelectorAll('td.clickable')];
   check(ddg.length > 0, `the measured ddG cells are clickable, got ${ddg.length}`);
@@ -194,6 +199,20 @@ async function theStructurePageWorks() {
   check(!!panel && /chain A/.test(panel.textContent),
         'and the interface residues are listed per chain');
 
+  // Then a row of another sequence. The dimer was an explicit request about one
+  // sequence and does not become the page's new habit.
+  const rows = [...view.querySelectorAll('tbody tr:not(.selected)')];
+  if (!rows.length) {
+    check(false, 'there is another sequence to click');
+    return;
+  }
+  const dimerPath = out.state('structPath');
+  rows[0].dispatchEvent(new window.MouseEvent('click', {bubbles: true}));
+  await waitFor(() => out.state('structPath') !== dimerPath, 'the row to be selected');
+  check(/pentamer|trimer|-mer|relaxed dimer/.test(chosen()),
+        `clicking a row shows an assembly, got ${JSON.stringify(chosen())}`);
+  check(view.querySelectorAll('tbody tr.selected').length === 1,
+        'and exactly one sequence is marked again');
 }
 
 /* ----------------------------------------------------------------- the run */

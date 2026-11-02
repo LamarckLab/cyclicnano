@@ -19,6 +19,7 @@ from fastapi import Body, FastAPI, Query, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from ..assembly import place_monomer
 from . import interface, jobs, projects, store
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -191,6 +192,44 @@ def create_app(root: Path | str | None = None, *, allow_submit: bool = False,
         return Response(content=body.encode("utf-8"), media_type=media,
                         headers={"Cache-Control": "no-store",
                                  "Content-Disposition": f'attachment; filename="{name}"'})
+
+    @app.get("/api/runs/{run}/assembly")
+    def assembly_pdb(run: str,
+                     path: str = Query(..., description="A prediction inside 04_delivery/"),
+                     design: str = Query(..., description="The design backbone of its folder"),
+                     download: bool = Query(False, description="Send as a named attachment")):
+        """The whole designed ring for one sequence, built here and not stored.
+
+        The pipeline predicts one subunit per sequence and never the oligomer, so
+        this is the prediction laid onto every chain of the design backbone - the
+        designed geometry carrying the side chains the sequence implies, which is
+        the closest thing to a pentamer this pipeline has. It is assembled per
+        request because it is derivable in milliseconds and a file per sequence
+        would be tens of megabytes of the same thing.
+
+        Both paths come from the browser and both go through the same resolution
+        as any other file, so neither can leave the delivery folder. They are
+        pairings the caller could have made anyway by downloading the two files.
+        """
+        target = store.resolve(root, run, path)
+        backbone_pdb = store.resolve(root, run, design)
+        for chosen in (target, backbone_pdb):
+            if chosen.suffix.lower() != ".pdb":
+                raise store.Forbidden(f"not a structure: {chosen.name}")
+
+        try:
+            built = place_monomer(backbone_pdb, target)
+        except ValueError as err:
+            raise store.Forbidden(f"cannot assemble: {err}") from err
+
+        name = f"{target.stem}_C{len(built['chains'])}.pdb"
+        headers = {"Cache-Control": "no-store"}
+        if download:
+            headers["Content-Disposition"] = f'attachment; filename="{name}"'
+        return Response(content=built["pdb"],
+                        media_type=("application/octet-stream" if download
+                                    else "text/plain"),
+                        headers=headers)
 
     @app.get("/api/runs/{run}/interface")
     def interface_residues(run: str,
