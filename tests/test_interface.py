@@ -55,41 +55,9 @@ def test_evaluation_needs_a_stage_04_verdict():
         assert "stage 04" in str(exc)
 
 
-def test_the_oligomer_is_spelled_with_one_chain_per_symmetry_copy():
-    """colabfold is told to fold a homo-oligomer by repeating the chain, so the count
-    has to come from the symmetry of the run: three for a C3, five for a C5."""
-    tmp = Path(tempfile.mkdtemp(prefix="cyclicnano_iface_"))
-    try:
-        rows = [{"sequence_id": "design_1__seq000", "sequence": "AAA"},
-                {"sequence_id": "design_1__seq002", "sequence": "CCC"}]
-        text = s05_interface.multimer_fasta(rows, 5, tmp / "x.fasta").read_text()
-        assert text.splitlines()[1] == "AAA:AAA:AAA:AAA:AAA"
-        assert text.count(">") == 2
-
-        text = s05_interface.multimer_fasta(rows, 3, tmp / "y.fasta").read_text()
-        assert text.splitlines()[1] == "AAA:AAA:AAA"
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-
-
 def _cfg(*extra):
     return load_config(overrides=parse_overrides(
         ["target.symmetry=C5", "target.monomer_length=60", *extra]))
-
-
-def test_the_prediction_uses_the_multimer_model():
-    """ipTM is not defined for one chain, so stage 03's model cannot produce it."""
-    argv = [str(a) for a in s05_interface.build_command(_cfg(), Path("/in.fasta"),
-                                                        Path("/out"))]
-    assert "--model-type" in argv
-    assert argv[argv.index("--model-type") + 1] == "alphafold2_multimer_v3"
-    assert "single_sequence" in argv              # still no MSA; five chains change nothing
-
-
-def test_the_prediction_model_can_be_overridden():
-    argv = [str(a) for a in s05_interface.build_command(
-        _cfg("interface.model_type=alphafold2_multimer_v2"), Path("/in.fasta"), Path("/out"))]
-    assert argv[argv.index("--model-type") + 1] == "alphafold2_multimer_v2"
 
 
 def test_the_energy_dimer_is_built_on_the_design_backbone():
@@ -139,95 +107,6 @@ def test_the_energy_dimer_is_built_on_the_design_backbone():
         for label, target in (("A", "A"), ("B", "B")):
             far = np.linalg.norm(built.chains[label].ca - ring.chains[target].ca, axis=1).max()
             assert far < 0.01, (label, far)
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-
-
-def test_predictions_are_regrouped_under_short_names():
-    tmp = Path(tempfile.mkdtemp(prefix="cyclicnano_iface_"))
-    try:
-        sid = "design_1__seq000"
-        pdb = tmp / f"{sid}_unrelaxed_rank_001_alphafold2_multimer_v3_model_1_seed_000.pdb"
-        pdb.write_text("ATOM", encoding="utf-8")
-        (tmp / f"{sid}_scores_rank_001_alphafold2_multimer_v3_model_1_seed_000.json"
-         ).write_text("{}", encoding="utf-8")
-
-        out = s05_interface.regroup(tmp, [{"sequence_id": sid, "interface_pred_path": str(pdb)}])
-        assert sorted(p.name for p in (tmp / "design_1").iterdir()) == [
-            "seq000_af2multimer.pdb", "seq000_af2multimer_scores.json"]
-        assert Path(out[0]["interface_pred_path"]).name == "seq000_af2multimer.pdb"
-        assert list(tmp.glob("*.pdb")) == []
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-
-
-def test_the_stage_directory_is_left_holding_only_the_regrouped_folders():
-    """colabfold writes eight files per sequence and two are kept. Stage 03 has always
-    swept the rest; stage 05 shipped without doing so, and on 328 sequences that left
-    1971 loose files beside the 27 folders and 260 of the 319 MB."""
-    tmp = Path(tempfile.mkdtemp(prefix="cyclicnano_iface_"))
-    try:
-        from cyclicnano.config import load_config
-        from cyclicnano.manifest import RunState
-
-        cfg = load_config(overrides=parse_overrides(
-            ["target.symmetry=C5", f"run.outdir={tmp.as_posix()}", "backend.kind=local"]))
-        state = RunState(cfg.outdir)
-        work = state.stage_dir(s05_interface.STAGE)
-
-        # what colabfold leaves behind for one sequence
-        sid = "design_1__seq000"
-        (work / f"{sid}_unrelaxed_rank_001_x.pdb").write_text("ATOM", encoding="utf-8")
-        (work / f"{sid}_scores_rank_001_x.json").write_text(
-            json.dumps({"iptm": 0.9}), encoding="utf-8")
-        for junk in (f"{sid}.a3m", f"{sid}_coverage.png", f"{sid}_pae.png",
-                     f"{sid}_plddt.png", f"{sid}.done.txt",
-                     f"{sid}_predicted_aligned_error_v1.json"):
-            (work / junk).write_text("x", encoding="utf-8")
-        for keep in ("config.json", "cite.bibtex", "log.txt"):
-            (work / keep).write_text("x", encoding="utf-8")
-
-        rows = s05_interface.regroup(
-            work, [{"sequence_id": sid,
-                    "interface_pred_path": str(work / f"{sid}_unrelaxed_rank_001_x.pdb"),
-                    "interface_ok": True}])
-        assert rows[0]["interface_ok"]
-
-        # the sweep, as run() does it
-        logs = Path(cfg.outdir) / "logs"
-        for path in list(work.iterdir()):
-            if not path.is_file():
-                continue
-            if path.name in ("config.json", "cite.bibtex", "log.txt"):
-                (logs / "colabfold_multimer").mkdir(parents=True, exist_ok=True)
-                path.replace(logs / "colabfold_multimer" / path.name)
-            else:
-                path.unlink()
-
-        assert [p.name for p in work.iterdir()] == ["design_1"]
-        assert sorted(p.name for p in (work / "design_1").iterdir()) == [
-            "seq000_af2multimer.pdb", "seq000_af2multimer_scores.json"]
-        assert (logs / "colabfold_multimer" / "config.json").exists()
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-
-
-def test_ipTM_is_read_from_the_multimer_scores():
-    tmp = Path(tempfile.mkdtemp(prefix="cyclicnano_iface_"))
-    try:
-        sid = "design_1__seq000"
-        (tmp / f"{sid}_unrelaxed_rank_001_x.pdb").write_text("ATOM", encoding="utf-8")
-        (tmp / f"{sid}_scores_rank_001_x.json").write_text(
-            json.dumps({"iptm": 0.88, "ptm": 0.9, "plddt": [90.0, 92.0]}), encoding="utf-8")
-
-        row = s05_interface.collect_prediction(tmp, sid)
-        assert row["interface_ok"] is True
-        assert row["iptm"] == 0.88
-        assert row["multimer_ptm"] == 0.9
-        assert abs(row["multimer_plddt"] - 91.0) < 1e-9
-
-        absent = s05_interface.collect_prediction(tmp, "design_9__seq000")
-        assert absent["interface_ok"] is False
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -299,16 +178,17 @@ def test_an_unevaluated_sequence_gets_a_null_block_not_a_block_of_nulls():
         assert s04_delivery._interface_block({"sequence_id": "x"}, tmp) is None
         assert s04_delivery._interface_block(
             {"sequence_id": "x", "interface_scored": float("nan"),
-             "iptm": float("nan")}, tmp) is None
+             "dG_interface": float("nan")}, tmp) is None
         assert s04_delivery._interface_block(
-            {"sequence_id": "x", "interface_scored": False, "iptm": None}, tmp) is None
+            {"sequence_id": "x", "interface_scored": False,
+             "dG_interface": None}, tmp) is None
 
-        scored = {"sequence_id": "x", "interface_scored": True, "iptm": 0.88,
-                  "dG_interface": -38.5, "dSASA_interface": 1849.0}
+        scored = {"sequence_id": "x", "interface_scored": True,
+                  "dG_interface": -38.5,
+                  "dSASA_interface": 1849.0}
         block = s04_delivery._interface_block(scored, tmp)
-        assert block["iptm"] == 0.88
         assert block["dG_interface"] == -38.5
-        assert block["prediction"] is None            # nothing was copied into the folder
+        assert block["dimer"] is None                 # nothing was copied into the folder
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -317,20 +197,20 @@ def test_the_record_carries_only_the_fields_that_were_asked_for():
     """Trimmed on request. Everything dropped is still in tables/sequences.csv; what
     goes here is what gets read when looking at one design."""
     assert s04_delivery._SEQ_FIELDS == ["seq_index", "sc_pass", "sc_rmsd", "mean_plddt"]
-    assert s04_delivery._INTERFACE_FIELDS == [
-        "iptm", "multimer_ptm", "multimer_plddt", "dG_interface"]
-    # the block also names the two structures the two numbers came from
+    assert s04_delivery._INTERFACE_FIELDS == ["dG_interface"]
+    # the block also names the structure the number was measured on
     block = s04_delivery._interface_block(
-        {"interface_scored": True, "iptm": 0.9}, Path("."))
-    assert set(block) == set(s04_delivery._INTERFACE_FIELDS) | {"prediction", "dimer"}
+        {"interface_scored": True, "dG_interface": -30.0}, Path("."))
+    assert set(block) == set(s04_delivery._INTERFACE_FIELDS) | {"dimer"}
     for gone in ("min_plddt", "ptm", "mpnn_score", "mpnn_global_score",
+                 "iptm", "multimer_ptm", "multimer_plddt",
                  "n_interface_residues", "interface_hbonds", "packstat",
                  "shape_complementarity", "dSASA_interface", "dG_dSASA_100"):
         assert gone not in s04_delivery._SEQ_FIELDS
         assert gone not in s04_delivery._INTERFACE_FIELDS
 
 
-def test_a_dry_run_shows_both_commands_and_writes_nothing():
+def test_a_dry_run_shows_the_one_command_and_writes_nothing():
     tmp = Path(tempfile.mkdtemp(prefix="cyclicnano_iface_"))
     try:
         import contextlib
@@ -342,8 +222,10 @@ def test_a_dry_run_shows_both_commands_and_writes_nothing():
         with contextlib.redirect_stdout(buf):
             s05_interface.run(cfg, RunState(cfg.outdir), Runner(dry_run=True), dry_run=True)
         out = buf.getvalue()
-        assert "alphafold2_multimer_v3" in out, out
         assert "interface_energy.py" in out, out
+        # There is no GPU step left in this stage, so no colabfold invocation.
+        assert "colabfold" not in out, out
+        assert "multimer" not in out, out
         assert not (tmp / ".done").exists()
         assert not (tmp / "05_interface").exists()
     finally:
@@ -362,5 +244,39 @@ def test_interface_metrics_are_not_part_of_any_rule():
     """The whole point: these describe a design, they do not select one."""
     cfg = _cfg()
     rules = (cfg.get("backbone_filter.rules") or []) + (cfg.get("validate.rules") or [])
-    for metric in ("iptm", "dG_interface", "dSASA_interface", "dG_dSASA_100"):
+    for metric in ("dG_interface", "dSASA_interface", "dG_dSASA_100"):
         assert not any(metric in rule for rule in rules), (metric, rules)
+
+
+def test_the_stage_no_longer_folds_an_oligomer():
+    """The multimer prediction is gone, and so is every helper that served it.
+
+    Worth pinning: the dimer the energy is measured on is built from the stage-03
+    monomer, so dropping the oligomer prediction was a clean removal. A helper left
+    behind would be dead code that reads as if the prediction still happens.
+    """
+    for gone in ("multimer_fasta", "build_command", "collect_prediction", "regroup",
+                 "PRED_SUFFIX", "SCORES_SUFFIX"):
+        assert not hasattr(s05_interface, gone), gone
+
+    import ast
+
+    source = Path(s05_interface.__file__).read_text(encoding="utf-8")
+    # The module docstring is checked the other way round, below: it has to keep
+    # saying what was removed. So the code is checked with the prose taken out,
+    # rather than by searching the file, which would flag the explanation itself.
+    tree = ast.parse(source)
+    if (tree.body and isinstance(tree.body[0], ast.Expr)
+            and isinstance(tree.body[0].value, ast.Constant)):
+        tree.body = tree.body[1:]
+    code = ast.unparse(tree).lower()
+    assert "iptm" not in code
+    assert "colabfold" not in code
+    assert "multimer" not in code
+
+    # And the docstring does still explain the removal and what it cost, because a
+    # capability that vanishes without a note reads as one that was never there.
+    doc = (s05_interface.__doc__ or "").lower()
+    assert "iptm" in doc and "clash" in doc
+
+

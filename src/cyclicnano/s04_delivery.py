@@ -104,52 +104,56 @@ _SEQ_FIELDS = ["seq_index", "sc_pass", "sc_rmsd", "mean_plddt"]
 # Written by stage 05 when it runs. A sequence that was never evaluated carries null
 # rather than a missing key, so that "not measured" is visible and cannot be mistaken
 # for "measured and poor".
-_INTERFACE_FIELDS = ["iptm", "multimer_ptm", "multimer_plddt", "dG_interface"]
+#
+# ipTM and the multimer confidences used to be here. Stage 05 no longer folds the
+# oligomer, so they are no longer produced; runs that already hold them keep them in
+# tables/sequences.csv, which is never rewritten backwards.
+_INTERFACE_FIELDS = ["dG_interface"]
 INTERFACE_DIR = "interface"
 
 
 def _interface_block(row: dict, folder: Path) -> dict | None:
-    """The stage-05 measurements for one sequence, or None if it was not evaluated.
+    """The stage-05 measurement for one sequence, or None if it was not evaluated.
 
-    These describe the contact between subunits, which nothing in stages 03 and 04
-    looks at: RMSD and pLDDT are both properties of a single chain. They are reported
-    and never filtered on, so a poor interface marks a design rather than removing it.
+    This describes the contact between subunits, which nothing in stages 03 and 04
+    looks at: RMSD and pLDDT are both properties of a single chain. It is reported and
+    never filtered on, so a poor interface marks a design rather than removing it.
     """
     # Through _jsonable first. A sequence that was never evaluated reads back from the
     # table as NaN, and bool(NaN) is True in Python, so the obvious test passes for
     # exactly the rows it was written to catch and every unevaluated sequence was
     # handed a block of nulls instead of a null block.
-    if not _jsonable(row.get("interface_scored")) and _jsonable(row.get("iptm")) is None:
+    if (not _jsonable(row.get("interface_scored"))
+            and _jsonable(row.get("dG_interface")) is None):
         return None
     block = {k: _jsonable(row.get(k)) for k in _INTERFACE_FIELDS}
-    # Two structures, because the two numbers come from different ones: ipTM from the
-    # multimer prediction, the energy from the designed geometry carrying the side
-    # chains the sequence implies.
-    for key, field in (("interface_pred_path", "prediction"),
-                       ("dimer_relaxed_path", "dimer")):
-        value = row.get(key)
-        if value:
-            name = Path(str(value)).name
-            block[field] = (f"{INTERFACE_DIR}/{name}"
-                            if (folder / INTERFACE_DIR / name).exists() else None)
-        else:
-            block[field] = None
+    # One structure now: the relaxed dimer in the designed geometry, which is where
+    # the energy was measured. There is no oligomer prediction any more.
+    value = row.get("dimer_relaxed_path")
+    if value:
+        name = Path(str(value)).name
+        block["dimer"] = (f"{INTERFACE_DIR}/{name}"
+                          if (folder / INTERFACE_DIR / name).exists() else None)
+    else:
+        block["dimer"] = None
     return block
 
 
 def _copy_interface(group: list[dict], dest: Path) -> int:
-    """Carry the predicted oligomer into the folder beside the monomer predictions."""
+    """Carry the relaxed dimer into the folder beside the monomer predictions.
+
+    The structure the energy was measured on, so the folder can be read without the
+    run: the number in sequences.json and the file it came from travel together.
+    """
     n = 0
     for row in group:
-        for key in ("interface_pred_path", "dimer_relaxed_path"):
-            value = row.get(key)
-            if not value or not Path(str(value)).exists():
-                continue
-            src = Path(str(value))
-            dest.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dest / src.name)
-            if key == "interface_pred_path":
-                n += 1
+        value = row.get("dimer_relaxed_path")
+        if not value or not Path(str(value)).exists():
+            continue
+        src = Path(str(value))
+        dest.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest / src.name)
+        n += 1
     return n
 
 

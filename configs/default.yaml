@@ -155,21 +155,14 @@ validate:
 # because the question is how the designs that got through assemble and not whether
 # to let more of them through.
 interface:
-  # ipTM is not defined for a single chain, so the oligomer has to be folded again
-  # with the multimer model. For C5 that is 300 residues rather than 60, about 40
-  # seconds a sequence against roughly one for the monomer.
-  model_type: alphafold2_multimer_v3
-  msa_mode: single_sequence   # a de novo design has no homologues as five chains either
-  num_recycle: 3
-  num_models: 1
-  # Rosetta cannot score an unrelaxed AlphaFold model usefully: a 300-residue pentamer
+  # Rosetta cannot score an unrelaxed AlphaFold model usefully: an unrelaxed structure
   # came in at +7189 and left at -1065, a gap made of small clashes rather than of
   # anything about the design. One restrained cycle costs about 85 seconds.
   relax_cycles: 1
-  # colabfold writes eight files per sequence and two are kept. The rest are plots,
-  # the single-sequence a3m and the PAE dump; on 328 sequences they were 1971 files
-  # and 260 of the 319 MB the stage occupied.
-  keep_all_outputs: false
+  # The AlphaFold2-multimer prediction this stage used to run is gone, and with it
+  # ipTM: the oligomer predictions showed clashes often enough not to be trusted.
+  # What that costs is stated in the stage docstring - ipTM was the only number here
+  # that asked whether the sequence assembles at all. Stage 05 is now CPU-only.
 
 # ------------------------------------------------- execution
 compute:

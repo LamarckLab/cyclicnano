@@ -2,26 +2,32 @@
 
 Stages 03 and 04 answer one question: does the designed sequence fold into the
 designed subunit. Both RMSD and pLDDT are properties of a single chain, so a design
-can clear them while saying nothing at all about whether the subunits assemble. This
-stage adds the part they leave out, and adds it as description rather than as another
-gate: nothing here changes success_rate or final_pass.
+can clear them while saying nothing about whether the subunits assemble. This stage
+adds the part they leave out.
 
-Two measurements, from one structure:
+One measurement:
 
-  ipTM, from an AlphaFold2-multimer prediction of the whole oligomer. The monomer run
-  in stage 03 cannot produce it, because an interface predicted TM-score is not
-  defined for a single chain. This is a separate, heavier prediction: for C5 it folds
-  300 residues rather than 60.
+  dG_separated, from Rosetta's InterfaceAnalyzerMover, for the contact between two
+  subunits: the score of the complex minus the two separated and repacked chains, in
+  REU. It is not measured on a prediction of the oligomer. The monomer that stage 03
+  predicted for this sequence is superposed onto two adjacent chains of the design
+  backbone, which gives the designed geometry carrying real side chains, and that
+  dimer is relaxed under coordinate restraints and scored.
 
-  dG_interface, from Rosetta, for the contact between two subunits. It is NOT measured
-  on the prediction. The monomer that stage 03 predicted for this sequence is
-  superposed onto two adjacent chains of the design backbone, giving the designed
-  geometry carrying real side chains, and that dimer is relaxed and scored.
+No GPU is involved. The superposition is linear algebra and the scoring is Rosetta, so
+this stage runs on CPU alone.
 
-  The two therefore describe different structures, deliberately. ipTM asks whether the
-  sequence would assemble this way at all; dG asks whether the interface we designed is
-  any good once the side chains the sequence implies are put on it. A design can do well
-  on one and badly on the other, and that difference is information rather than noise.
+**What this stage no longer does.** It used to fold the whole oligomer with
+AlphaFold2-multimer for an ipTM. That was dropped because the multimer predictions
+showed clashes often enough not to be trusted. The removal is worth stating plainly,
+because it removes something: ipTM was the only number in this pipeline that asked
+whether the sequence would assemble into the ring at all. dG asks a narrower question
+- whether the interface that was designed scores well once the side chains the
+sequence implies are placed on it - and it asks it on a geometry that is assumed
+rather than predicted. Nothing here now tests that assumption. A clashing multimer
+prediction is also not unambiguous evidence against the predictor; it can be evidence
+against the design. The two cannot be told apart from the prediction alone, which is
+why this is a judgement call and not a measurement.
 
 Scope is deliberately narrow. Only backbones that passed stage 04, and within them
 only sequences that passed, because this is an evaluation of the designs that got
@@ -38,8 +44,8 @@ from .runner import Runner
 
 STAGE = "05_interface"
 
-PRED_SUFFIX = "_af2multimer.pdb"
-SCORES_SUFFIX = "_af2multimer_scores.json"
+DIMER_SUFFIX = "_dimer.pdb"
+DIMER_RELAXED_SUFFIX = "_dimer_relaxed.pdb"
 
 WORKER = Path(__file__).resolve().parent / "scripts" / "interface_energy.py"
 
@@ -61,60 +67,6 @@ def targets(backbones, sequences) -> list[dict]:
     if "sc_pass" in rows.columns:
         rows = rows[rows["sc_pass"].fillna(False).astype(bool)]
     return rows.to_dict("records")
-
-
-def multimer_fasta(rows: list[dict], n_chains: int, path: Path) -> Path:
-    """One record per sequence, the chain repeated and joined by colons.
-
-    That is how colabfold is told to fold a homo-oligomer. The count comes from the
-    symmetry of the run, so a C3 gets three copies and a C5 five.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fh:
-        for row in rows:
-            fh.write(f">{row['sequence_id']}\n" + ":".join([row["sequence"]] * n_chains) + "\n")
-    return path
-
-
-def build_command(cfg: Config, fasta: Path, outdir: Path) -> list[str]:
-    exe = cfg.get("paths.colabfold") or "colabfold_batch"
-    argv = [str(exe)]
-    params = cfg.get("paths.colabfold_params")
-    if params:
-        argv += ["--data", str(params)]
-    argv += [
-        # Still single-sequence. A de novo design has no homologues whether it is
-        # folded as one chain or five, and the multimer model does not change that.
-        "--msa-mode", str(cfg.get("interface.msa_mode", "single_sequence")),
-        "--model-type", str(cfg.get("interface.model_type", "alphafold2_multimer_v3")),
-        "--num-recycle", str(cfg.get("interface.num_recycle", 3)),
-        "--num-models", str(cfg.get("interface.num_models", 1)),
-    ]
-    return argv + [str(fasta), str(outdir)]
-
-
-def collect_prediction(outdir: Path, sequence_id: str) -> dict:
-    """ipTM and its companions from the rank-1 multimer prediction."""
-    pdbs = sorted(outdir.glob(f"{sequence_id}_unrelaxed_rank_001_*.pdb"))
-    if not pdbs:
-        return {"interface_pred_path": None, "interface_ok": False}
-
-    row = {"interface_pred_path": str(pdbs[0]), "interface_ok": True}
-    scores = sorted(outdir.glob(f"{sequence_id}_scores_rank_001_*.json"))
-    if scores:
-        data = json.loads(scores[0].read_text(encoding="utf-8"))
-        if data.get("iptm") is not None:
-            row["iptm"] = float(data["iptm"])
-        if data.get("ptm") is not None:
-            row["multimer_ptm"] = float(data["ptm"])
-        plddt = data.get("plddt") or []
-        if plddt:
-            row["multimer_plddt"] = float(sum(plddt) / len(plddt))
-    return row
-
-
-DIMER_SUFFIX = "_dimer.pdb"
-DIMER_RELAXED_SUFFIX = "_dimer_relaxed.pdb"
 
 
 def _transformed_atoms(pdb_path: Path, rot, shift, chain_id: str) -> list[str]:
@@ -143,7 +95,7 @@ def build_dimer(design_pdb: Path, monomer_pdb: Path, out_path: Path,
 
     RFdiffusion writes a cyclic oligomer in ring order, so chains A and B are
     neighbours; measured on real backbones they sit 5.4 A apart while A-C and A-D are
-    at 11.3 A. That is unlike the predictions, where the chain labels are arbitrary.
+    at 11.3 A. That is unlike a prediction, where the chain labels are arbitrary.
     """
     from .geometry import kabsch, rmsd
     from .pdbio import read_pdb
@@ -168,38 +120,17 @@ def build_dimer(design_pdb: Path, monomer_pdb: Path, out_path: Path,
     return {"dimer_path": str(out_path), "dimer_fit_rmsd": round(max(fits), 3)}
 
 
-def regroup(work: Path, rows: list[dict]) -> list[dict]:
-    """Same treatment stage 03 gives its output: one folder per backbone, short names."""
-    out = []
-    for row in rows:
-        sid, pred = row["sequence_id"], row.get("interface_pred_path")
-        if not pred or not Path(str(pred)).exists():
-            out.append(row)
-            continue
-        src = Path(str(pred))
-        bid = sid.split("__", 1)[0]
-        short = sid.split("__", 1)[1] if "__" in sid else sid
-        dest = work / bid
-        dest.mkdir(parents=True, exist_ok=True)
-        new_pdb = dest / f"{short}{PRED_SUFFIX}"
-        src.replace(new_pdb)
-        for scores in sorted(src.parent.glob(f"{sid}_scores_rank_001_*.json")):
-            scores.replace(dest / f"{short}{SCORES_SUFFIX}")
-        out.append({**row, "interface_pred_path": str(new_pdb)})
-    return out
-
-
 def run(cfg: Config, state: RunState, runner: Runner, force: bool = False,
         dry_run: bool = False) -> dict:
-    # As in stages 02 and 03: the command is built from paths, so it can be shown on
+    relax_cycles = str(int(cfg.get("interface.relax_cycles", 1)))
+
+    # As in the other stages: the command is built from paths, so it can be shown on
     # an empty run directory, which is when someone wants to read it.
     if dry_run:
-        runner.run("colabfold", build_command(cfg, state.outdir / "logs" / "interface.fasta",
-                                              state.outdir / STAGE))
         runner.run("rosetta", ["python", str(WORKER),
                                str(state.outdir / "logs" / "interface_jobs.jsonl"),
                                str(state.outdir / "logs" / "interface_results.jsonl"),
-                               "--relax-cycles", str(int(cfg.get("interface.relax_cycles", 1)))])
+                               "--relax-cycles", relax_cycles])
         return {}
     if state.is_done(STAGE) and not force:
         print(f"[{STAGE}] already done, skipping")
@@ -213,59 +144,37 @@ def run(cfg: Config, state: RunState, runner: Runner, force: bool = False,
         return {"n_evaluated": 0}
 
     work = state.stage_dir(STAGE)
+    # Created here rather than assumed. It used to appear as a side effect of
+    # writing the multimer FASTA, and removing that prediction left this stage
+    # opening a manifest inside a directory nothing had made.
     logs = state.outdir / "logs"
-    n_chains = cfg.sym_order
+    logs.mkdir(parents=True, exist_ok=True)
     print(f"[{STAGE}] {len(rows)} sequences from "
-          f"{len({r['backbone_id'] for r in rows})} backbones, as {n_chains}-mers")
+          f"{len({r['backbone_id'] for r in rows})} backbones, CPU only")
 
-    fasta = multimer_fasta(rows, n_chains, logs / "interface.fasta")
-    runner.run("colabfold", build_command(cfg, fasta, work))
-
-    scored = [{"sequence_id": r["sequence_id"], **collect_prediction(work, r["sequence_id"])}
-              for r in rows]
-    scored = regroup(work, scored)
-    n_pred = sum(1 for r in scored if r.get("interface_ok"))
-    print(f"[{STAGE}] {n_pred}/{len(rows)} multimer predictions recovered")
-
-    # The same tidying stage 03 does, which this stage was missing: colabfold leaves
-    # six files per sequence beside the two that are kept, and on 328 sequences that
-    # was 1971 loose files and 260 of the 319 MB. The coverage plot and the a3m are
-    # particularly empty here, since single-sequence mode means the alignment is the
-    # input sequence and nothing else.
-    if not cfg.get("interface.keep_all_outputs", False):
-        archive = logs / "colabfold_multimer"
-        removed = 0
-        for path in work.iterdir():
-            if not path.is_file():                          # the regrouped folders stay
-                continue
-            if path.name in ("config.json", "cite.bibtex", "log.txt"):
-                archive.mkdir(parents=True, exist_ok=True)
-                path.replace(archive / path.name)
-            else:
-                path.unlink()
-                removed += 1
-        if removed:
-            print(f"[{STAGE}] removed {removed} unused colabfold products")
-
-    # The energy is measured on the designed geometry, not on the prediction: two
-    # copies of the monomer stage 03 predicted, placed at two adjacent subunit
-    # positions of the backbone that was designed. Nothing here needs a GPU.
+    # The energy is measured on the designed geometry: two copies of the monomer
+    # stage 03 predicted, placed at two adjacent subunit positions of the backbone
+    # that was designed.
     bb_path = dict(zip(backbones["backbone_id"], backbones["backbone_path"]))
     mono_path = dict(zip(sequences["sequence_id"], sequences.get("pred_path", [])))
-    n_built = 0
-    for row in scored:
+    scored, n_built = [], 0
+    for row in rows:
         sid = row["sequence_id"]
         bid = sid.split("__", 1)[0]
+        entry = {"sequence_id": sid, "backbone_id": row.get("backbone_id", bid)}
         design, monomer = bb_path.get(bid), mono_path.get(sid)
         if not design or not monomer or not Path(str(monomer)).exists():
+            entry["dimer_error"] = "no stage 03 prediction for this sequence"
+            scored.append(entry)
             continue
         short = sid.split("__", 1)[1] if "__" in sid else sid
         try:
-            row.update(build_dimer(Path(str(design)), Path(str(monomer)),
-                                   work / bid / f"{short}{DIMER_SUFFIX}"))
+            entry.update(build_dimer(Path(str(design)), Path(str(monomer)),
+                                     work / bid / f"{short}{DIMER_SUFFIX}"))
             n_built += 1
         except Exception as exc:                            # one bad pair is not a run
-            row["dimer_error"] = f"{type(exc).__name__}: {exc}"
+            entry["dimer_error"] = f"{type(exc).__name__}: {exc}"
+        scored.append(entry)
     print(f"[{STAGE}] {n_built}/{len(rows)} design-geometry dimers built")
 
     # Rosetta runs in its own environment, so the structures go over as a manifest and
@@ -285,7 +194,7 @@ def run(cfg: Config, state: RunState, runner: Runner, force: bool = False,
 
     if n_built:
         runner.run("rosetta", ["python", str(WORKER), str(jobs), str(results),
-                               "--relax-cycles", str(int(cfg.get("interface.relax_cycles", 1)))],
+                               "--relax-cycles", relax_cycles],
                    check=False)         # a structure Rosetta chokes on must not end the run
 
     energies = {}
@@ -300,17 +209,16 @@ def run(cfg: Config, state: RunState, runner: Runner, force: bool = False,
 
     merged = []
     for row in scored:
-        sid = row["sequence_id"]
         entry = dict(row)
-        entry.update(energies.get(sid, {}))
-        entry["interface_scored"] = sid in energies
+        entry.update(energies.get(row["sequence_id"], {}))
+        entry["interface_scored"] = row["sequence_id"] in energies
         merged.append(entry)
     state.sequences.upsert(merged)
 
-    n_energy = len(energies)
-    if n_energy < n_built:
-        print(f"[{STAGE}] WARNING: {n_built - n_energy} dimers have no interface "
+    n_scored = len(energies)
+    if n_scored < n_built:
+        print(f"[{STAGE}] WARNING: {n_built - n_scored} dimers have no interface "
               f"energy; see {results}")
-    print(f"[{STAGE}] {n_energy}/{len(rows)} sequences fully evaluated")
+    print(f"[{STAGE}] {n_scored}/{len(rows)} sequences scored")
     state.mark_done(STAGE)
-    return {"n_targets": len(rows), "n_predicted": n_pred, "n_scored": n_energy}
+    return {"n_targets": len(rows), "n_scored": n_scored}
