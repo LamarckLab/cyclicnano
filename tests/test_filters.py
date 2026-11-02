@@ -89,3 +89,38 @@ def test_check_syntax_raises_on_bad_rule():
         raise AssertionError("expected a RuleError")
     except RuleError:
         pass
+
+
+def test_a_rejection_reason_states_what_broke_not_what_was_required():
+    """`success_rate >= 0.3` is the requirement; the reason has to be the fault.
+
+    Written as the rule, a rejection reads as though the requirement itself were
+    the complaint, which is how `final_fail_reason` came to say the opposite of
+    what it meant. The comparison is flipped so the sentence is true of the
+    candidate that failed.
+    """
+    from cyclicnano.filters import FilterSet, negate
+
+    assert negate("success_rate >= 0.3") == "success_rate < 0.3"
+    assert negate("loop_max_len <= 12") == "loop_max_len > 12"
+    assert negate("max_centre_distance < 27") == "max_centre_distance >= 27"
+    assert negate("n_clash > 0") == "n_clash <= 0"
+    assert negate("strand_frac == 0") == "strand_frac != 0"
+    assert negate("sym_order_ok != False") == "sym_order_ok == False"
+
+    # Anything that is not a single comparison is wrapped rather than guessed
+    # at: a silently wrong negation in a rejection reason is worse than a
+    # clumsy one.
+    assert negate("strand_frac == 0 and n_helices == 3") == (
+        "not (strand_frac == 0 and n_helices == 3)")
+    assert negate("a < b < c") == "not (a < b < c)"
+    assert negate("this is not python") == "not (this is not python)"
+
+    # The raw rules stay raw. They are the data, they have to match the config
+    # and the per-rule counts in filter_summary.json, and only the sentence a
+    # reader sees is rewritten.
+    verdict = FilterSet("validate", ["success_rate >= 0.3"]).apply({"success_rate": 0.25})
+    assert verdict.failed_rules == ["success_rate >= 0.3"]
+    assert verdict.reason == "success_rate < 0.3"
+    assert FilterSet("x", ["a == 1", "b <= 2"]).apply({"a": 2, "b": 3}).reason == (
+        "a != 1; b > 2")

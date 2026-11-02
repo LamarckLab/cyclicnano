@@ -88,6 +88,38 @@ def evaluate(rule: str, metrics: dict) -> bool:
     return result
 
 
+_NEGATED_OPS = {
+    ast.Gt: ast.LtE, ast.GtE: ast.Lt, ast.Lt: ast.GtE, ast.LtE: ast.Gt,
+    ast.Eq: ast.NotEq, ast.NotEq: ast.Eq,
+}
+
+
+def negate(rule: str) -> str:
+    """A rule, rewritten as the condition that broke it.
+
+    A rejection reason reading `success_rate >= 0.3` states the requirement, not
+    what went wrong, and reads as though the requirement were the complaint. The
+    comparison is flipped instead, so the reason says `success_rate < 0.3`, which
+    is what is true of the candidate.
+
+    Only a single comparison is flipped. Anything else - a chain, a boolean
+    combination, arithmetic on both sides - is wrapped rather than guessed at,
+    because a silently wrong negation in a rejection reason is worse than a
+    clumsy one.
+    """
+    try:
+        tree = ast.parse(rule, mode="eval")
+    except SyntaxError:
+        return f"not ({rule})"
+
+    node = tree.body
+    if (isinstance(node, ast.Compare) and len(node.ops) == 1
+            and type(node.ops[0]) in _NEGATED_OPS):
+        node.ops[0] = _NEGATED_OPS[type(node.ops[0])]()
+        return ast.unparse(tree)
+    return f"not ({rule})"
+
+
 @dataclass
 class FilterResult:
     passed: bool
@@ -95,7 +127,13 @@ class FilterResult:
 
     @property
     def reason(self) -> str:
-        return "; ".join(self.failed_rules)
+        """Why this candidate was rejected, as conditions rather than requirements.
+
+        `failed_rules` keeps the rules verbatim, because that is the data and it
+        has to match the config and the per-rule counts in filter_summary.json.
+        This is the sentence a reader sees.
+        """
+        return "; ".join(negate(rule) for rule in self.failed_rules)
 
 
 class FilterSet:
