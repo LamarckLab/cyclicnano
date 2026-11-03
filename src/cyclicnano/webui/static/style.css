@@ -294,7 +294,13 @@ td.id { font-family: var(--mono); font-size: 12.5px; font-weight: 550; }
    it, so nothing is ever read through a fill. */
 .meter { display: inline-flex; align-items: center; gap: var(--s2); }
 .meter .track { width: 44px; height: 5px; background: var(--surface-sunk); border-radius: 999px; overflow: hidden; }
-.meter .fill { height: 100%; background: var(--series-1); border-radius: 0 3px 3px 0; min-width: 1px; }
+/* display:block, because .fill is a span. .track is a flex item of .meter and so
+   is blockified for free, but its own child is not: width and height do not
+   apply to a non-replaced inline element, so the fill had no size and every rate
+   from 0.85 to 0.00 drew the same empty track. The funnel's equivalent is a div
+   and never had the problem, which is why one of the two bars worked. */
+.meter .fill { display: block; height: 100%; background: var(--series-1);
+               border-radius: 0 3px 3px 0; min-width: 1px; }
 
 .seq {
   font-family: var(--mono);
