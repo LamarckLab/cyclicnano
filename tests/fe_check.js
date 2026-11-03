@@ -63,6 +63,7 @@ const check = (ok, what) => {
   if (!ok) failures.push(what);
 };
 
+const LF = String.fromCharCode(10);
 const clean = (p) => ((p && p.name ? `${p.name}: ` : '') + String((p && p.message) || p));
 
 /** Poll until `fn()` is truthy, or give up and record it. */
@@ -215,6 +216,27 @@ async function theStructurePageWorks() {
         'and exactly one sequence is marked again');
 }
 
+async function theFooterIsThere() {
+  console.log(LF + '  the footer names the source and the author');
+  const out = await page('#/');
+  const {window} = out;
+  const foot = window.document.querySelector('footer');
+  check(!!foot, 'the page has a footer');
+  if (!foot) return;
+
+  for (const [id, where] of [['srclink', 'github.com/LamarckLab/cyclicnano'],
+                             ['authorlink', 'github.com/LamarckLab']]) {
+    const a = foot.querySelector('#' + id);
+    const label = a && a.querySelector('.lbl').textContent.trim();
+    check(!!a && a.href.includes(where), `${id} points at ${where}, got ${a && a.href}`);
+    // Built from a variable, so a missing key shows as an empty element rather
+    // than as the key itself, which no i18n check can see.
+    check(!!label, `${id} has a translated label, got ${JSON.stringify(label)}`);
+    check(a && a.rel === 'noopener noreferrer', `${id} opens safely, got ${a && a.rel}`);
+  }
+  check(!!foot.querySelector('#version'), 'the version has somewhere to go');
+}
+
 /* ----------------------------------------------------------------- the run */
 
 (async () => {
@@ -229,6 +251,7 @@ async function theStructurePageWorks() {
 
   await everyRouteRenders();
   await theStructurePageWorks();
+  await theFooterIsThere();
 
   console.log(`\n  ${failures.length ? `${failures.length} failed` : 'all checks passed'}`);
   process.exit(failures.length ? 1 : 0);

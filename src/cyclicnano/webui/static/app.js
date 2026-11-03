@@ -1835,6 +1835,24 @@ function paintThemeButton() {
   button.title = t('theme.toggle');
 }
 
+/** The footer's words, which live outside the view and survive a re-render.
+ *
+ *  The two destinations are spelled out beside the labels rather than hidden
+ *  behind them: this page is read by people who will want to clone the
+ *  repository, and a link that says only "source" makes them hover to find out
+ *  where it goes.
+ */
+function paintFooter() {
+  const label = (id, key) => {
+    const link = document.getElementById(id);
+    if (!link) return;
+    link.querySelector('.lbl').textContent = t(key);
+    link.title = t(key + '.title');
+  };
+  label('srclink', 'footer.source');
+  label('authorlink', 'footer.author');
+}
+
 function paintLangButton() {
   const button = document.getElementById('lang');
   button.textContent = t('lang.name');
@@ -1854,6 +1872,7 @@ document.getElementById('lang').addEventListener('click', () => {
   setLang(otherLang());
   paintLangButton();
   paintThemeButton();
+  paintFooter();
   render();                      // the viewer survives; only the text is rebuilt
 });
 
@@ -1878,8 +1897,13 @@ window.addEventListener('unhandledrejection', (e) => {
 getJSON('/api/health').then((h) => {
   document.getElementById('rootnote').textContent =
     h.root + (h.ok ? '' : t('root.unreadable'));
+  // No version when the package was never installed, and then the footer shows
+  // a name on its own rather than a name with a wrong number after it.
+  const version = document.getElementById('version');
+  if (version && h.version) version.textContent = h.version;
 }).catch(() => {});
 
 paintThemeButton();
 paintLangButton();
+paintFooter();
 render();

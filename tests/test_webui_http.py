@@ -191,6 +191,28 @@ def test_the_page_is_never_served_from_a_stale_cache():
             assert r.headers["cache-control"] == "no-store", name
 
 
+def test_the_page_names_its_source_and_its_author():
+    """The footer is static markup, so what is tested is that it is there.
+
+    Both destinations are public GitHub URLs written into index.html rather than
+    configured, because they are facts about this project and not about this
+    deployment. The version beside them comes from the health route; it is empty
+    in a checkout that was never installed, which is how this suite runs, and the
+    page hides an empty one rather than showing a wrong one.
+    """
+    if _unavailable():
+        return
+    with outputs() as root:
+        c = client_for(root)
+        page = c.get("/").text
+        assert "https://github.com/LamarckLab/cyclicnano" in page
+        assert "https://github.com/LamarckLab\"" in page
+        assert 'rel="noopener noreferrer"' in page    # a new tab must not reach back
+        assert 'id="version"' in page
+
+        assert "version" in c.get("/api/health").json()
+
+
 def test_the_export_route_hands_over_a_named_file():
     """It exists to hand a sheet to whoever orders the synthesis.
 

@@ -159,6 +159,30 @@ header {
 
 main { padding: var(--s5); max-width: 1680px; margin: 0 auto; }
 
+/* The footer. Muted ink and no rule above it: it is an attribution, not a
+   section, and most pages here end in a table that already has enough lines.
+   Same max-width and side padding as main, so it lines up with the content
+   rather than with the window. Wraps on a narrow screen instead of scrolling. */
+footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1) var(--s3);
+  max-width: 1680px;
+  margin: 0 auto;
+  padding: var(--s4) var(--s5) var(--s5);
+  font-size: 12.5px;
+  color: var(--ink-muted);
+}
+footer .prod { font-weight: 600; color: var(--ink-2); }
+footer .ver { margin-left: 6px; font-variant-numeric: tabular-nums; }
+footer .ver:empty { display: none; }       /* no number beats a wrong number */
+footer .sep { color: var(--hairline); }
+footer a { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-muted); }
+footer a:hover { color: var(--series-1); text-decoration: none; }
+footer .gi { flex: none; }                 /* an svg is replaced, but be explicit */
+footer .dest { font-family: var(--mono); font-size: 11.5px; opacity: 0.85; }
+
 h1 { font-size: 22px; font-weight: 620; letter-spacing: -0.015em; margin: 0 0 var(--s1); }
 h2 { font-size: 13px; font-weight: 620; letter-spacing: 0.02em; text-transform: uppercase;
      color: var(--ink-2); margin: 0 0 var(--s3); }

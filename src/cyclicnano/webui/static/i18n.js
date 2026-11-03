@@ -90,6 +90,10 @@ const STRINGS = {
     'nav.submit': 'Submit',
     'theme.toggle': 'Switch between light and dark',
     'lang.toggle': 'Switch language',
+    'footer.source': 'Source',
+    'footer.source.title': 'The code this page and the pipeline are built from',
+    'footer.author': 'Author',
+    'footer.author.title': 'The author of this project on GitHub',
     'lang.name': '中文',
     'root.unreadable': ' (unreadable)',
 
@@ -388,6 +392,10 @@ const STRINGS = {
     'nav.submit': '提交任务',
     'theme.toggle': '切换明暗主题',
     'lang.toggle': '切换语言',
+    'footer.source': '源码',
+    'footer.source.title': '这个页面和流水线的代码',
+    'footer.author': '作者',
+    'footer.author.title': '本项目作者的 GitHub 主页',
     'lang.name': 'EN',
     'root.unreadable': '（不可读）',
 

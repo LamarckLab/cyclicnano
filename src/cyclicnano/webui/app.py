@@ -47,8 +47,26 @@ class _PageFiles(StaticFiles):
                                              if cached else "no-store")
         return response
 
+
 DEFAULT_ROOT = "/data/lmk/cyclicnano_outputs"
 ENV_ROOT = "CYCLICNANO_OUTPUTS"
+
+
+def _installed_version() -> str:
+    """The version this service is running, for the footer.
+
+    Read from the installed distribution rather than kept in a constant here, so
+    pyproject.toml stays the one place it is written. A checkout that was never
+    installed - which is how the test suite runs - has no metadata to read, and
+    the answer is an empty string: the footer then shows a name without a
+    version instead of a name with a wrong one.
+    """
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+        return version("cyclicnano")
+    except (PackageNotFoundError, ImportError, ValueError):
+        return ""
+
 
 
 def output_root() -> Path:
@@ -126,7 +144,7 @@ def create_app(root: Path | str | None = None, *, allow_submit: bool = False,
         submit form out entirely rather than offering a button that 403s.
         """
         return {"ok": root.is_dir(), "root": str(root),
-                "can_submit": launcher.enabled}
+                "can_submit": launcher.enabled, "version": _installed_version()}
 
     @app.get("/api/runs")
     def runs() -> list[dict]:
