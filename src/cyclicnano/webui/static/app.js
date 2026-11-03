@@ -1179,6 +1179,91 @@ function message(text) {
  */
 
 let ifaceToken = 0;
+const ifaceCache = new Map();
+
+/** The interface residues of one dimer, fetched at most once.
+ *
+ *  Two callers want the same answer for the same file: the list under the viewer
+ *  and the marking inside it. They are reached by different paths - one from a
+ *  repaint, one from a structure finishing loading - so the request is shared
+ *  here rather than passed between them. A failure is not cached, so a retry is
+ *  a retry.
+ */
+function interfaceResidues(run, path) {
+  const key = `${run}\u0000${path}`;
+  if (!ifaceCache.has(key)) {
+    ifaceCache.set(key, getJSON(interfaceURL(run, path)).catch((err) => {
+      ifaceCache.delete(key);
+      throw err;
+    }));
+  }
+  return ifaceCache.get(key);
+}
+
+let markToken = 0;
+
+/** Mark a dimer's interface residues as selected, and nothing else as selected.
+ *
+ *  Mol*'s own selection, over the structure already on screen. An earlier version
+ *  loaded the interface side chains as a second structure in one colour, which
+ *  Mol* drew as one sphere per residue - it had CA atoms and nothing else, so it
+ *  read as a coarse-grained model. This marks the residues of the structure that
+ *  is already there, at the level the question is asked at.
+ *
+ *  Built through `Queries.generators.atoms` rather than a mol-script expression,
+ *  because the viewer bundle exports `lib.structure` and not the script builder.
+ *  Everything used here was checked against the vendored build before it was
+ *  written: Queries, StructureQuery, StructureSelection, StructureProperties, and
+ *  lociSelects with selectOnly and deselectAll.
+ *
+ *  Chain id and residue number come out of column 22 and columns 23-26 on the
+ *  server side and out of auth_asym_id and auth_seq_id here, which are the same
+ *  two fields, so the two halves cannot disagree about which residue is meant.
+ */
+function markInterface(viewer, current) {
+  const token = ++markToken;
+  const plugin = viewer && viewer.plugin;
+  const selects = plugin && plugin.managers && plugin.managers.interactivity
+    && plugin.managers.interactivity.lociSelects;
+  if (!selects) return;
+
+  // Whatever was marked belongs to the structure that was on screen before.
+  try { selects.deselectAll(); } catch (e) { /* nothing was selected */ }
+  if (!current || current.key !== 'dimer') return;
+
+  interfaceResidues(state.run, current.path).then((data) => {
+    if (token !== markToken || currentStructure() !== current) return;  // a faster click won
+    const lib = (window.molstar.lib || {}).structure;
+    if (!lib) {                                  // a build without lib.structure
+      report('no-mark-api');
+      return;
+    }
+    const {Queries, StructureQuery, StructureSelection, StructureProperties} = lib;
+    const entry = plugin.managers.structure.hierarchy.current.structures[0];
+    const structure = entry && entry.cell && entry.cell.obj && entry.cell.obj.data;
+    if (!structure) return;
+
+    const want = new Set();
+    for (const [chain, list] of Object.entries(data.chains || {})) {
+      for (const num of list) want.add(`${chain}:${num}`);
+    }
+    if (!want.size) return;                      // nothing in contact to mark
+
+    const query = Queries.generators.atoms({
+      residueTest: (ctx) => want.has(
+        `${StructureProperties.chain.auth_asym_id(ctx.element)}`
+        + `:${StructureProperties.residue.auth_seq_id(ctx.element)}`),
+    });
+    const loci = StructureSelection.toLociWithSourceUnits(
+      StructureQuery.run(query, structure));
+    selects.selectOnly({loci});
+  }).catch((err) => {
+    // The structure is drawn either way; a marking that fails is not fatal, but
+    // it cannot be seen from here, so it is written to the server log.
+    viewerError = err;
+    report('mark-failed');
+  });
+}
 
 function switchSequence(sequenceId) {
   if (!sequenceId || sequenceId === state.seqId) return false;
@@ -1208,7 +1293,7 @@ function paintInterface() {
   const token = ++ifaceToken;
   host.replaceChildren(el('div', {class: 'hint', text: t('iface.loading')}));
 
-  getJSON(interfaceURL(state.run, current.path))
+  interfaceResidues(state.run, current.path)
     .then((data) => {
       if (token !== ifaceToken) return;            // a faster click won
       const chains = Object.entries(data.chains || {});
@@ -1381,6 +1466,7 @@ async function showStructure() {
       message(t('viewer.themefail'));
       paintScale();
       resizeViewer();
+      markInterface(viewer, current);
       return;
     } catch (err) {
       viewerError = err;
@@ -1393,6 +1479,7 @@ async function showStructure() {
   viewerError = null;
   paintScale();
   resizeViewer();
+  markInterface(viewer, current);
   message('');
 }
 

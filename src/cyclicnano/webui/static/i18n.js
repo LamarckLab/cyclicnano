@@ -243,7 +243,8 @@ const STRINGS = {
       + 'so it describes the interface that was designed. The relax displaces the whole '
       + 'object by 2–3 Å, but changes its internal geometry by only 0.8 Å '
       + 'and the distance between the two subunits by under 1 Å: the drift is rigid '
-      + 'and the interface geometry held.',
+      + 'and the interface geometry held. The residues listed below are marked in '
+      + 'the viewer as selected; click empty space in the viewport to clear them.',
     'colour.chain': 'by chain',
     'colour.plddt': 'by pLDDT',
     'colour.ss': 'by secondary structure',
@@ -518,7 +519,8 @@ const STRINGS = {
     'note.dimer': '把单体预测叠到设计骨架的 A、B 两条链上，再做带约束的 relax。'
       + '{0} 就是在这个结构上算的，所以它量的是设计出来的那个界面。relax 会把整体'
       + '平移旋转 2～3 Å，但内部几何只变 0.8 Å、两链间距变化不到 1 Å'
-      + '——漂移是刚体的，界面几何守住了。',
+      + '——漂移是刚体的，界面几何守住了。下面列出的那些残基在 viewer 里是选中态，'
+      + '点视口里的空白处可以取消。',
     'colour.chain': '按链',
     'colour.plddt': '按 pLDDT',
     'colour.ss': '按二级结构',
