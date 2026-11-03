@@ -23,6 +23,30 @@ from ..assembly import place_monomer
 from . import interface, jobs, projects, store
 
 STATIC = Path(__file__).resolve().parent / "static"
+
+
+class _PageFiles(StaticFiles):
+    """The page's own files, served with a cache policy of their own.
+
+    The API routes have said `no-store` from the start; these had said nothing,
+    so a browser applied its heuristic and a deploy could leave someone looking
+    at the previous page. That happened: a CSS fix and a JavaScript feature were
+    copied to the server, verified byte for byte over HTTP, and still did not
+    appear in the browser.
+
+    The vendored bundle is the exception. It is pinned by version and checked
+    against a hash, so it cannot change under a URL that stays the same, and
+    re-sending five megabytes on every page load to protect against a change
+    that cannot happen is not a trade worth making.
+    """
+
+    def file_response(self, full_path, stat_result, scope, status_code=200):
+        response = super().file_response(full_path, stat_result, scope, status_code)
+        cached = "vendor" in Path(full_path).parts
+        response.headers["Cache-Control"] = ("public, max-age=31536000, immutable"
+                                             if cached else "no-store")
+        return response
+
 DEFAULT_ROOT = "/data/lmk/cyclicnano_outputs"
 ENV_ROOT = "CYCLICNANO_OUTPUTS"
 
@@ -300,7 +324,7 @@ def create_app(root: Path | str | None = None, *, allow_submit: bool = False,
     def index():
         return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-store"})
 
-    app.mount("/static", StaticFiles(directory=STATIC), name="static")
+    app.mount("/static", _PageFiles(directory=STATIC), name="static")
     return app
 
 

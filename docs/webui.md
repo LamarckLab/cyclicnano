@@ -382,6 +382,21 @@ Nothing is cached. A run directory is a few hundred kilobytes of CSV and JSON, a
 stage that has just finished should appear on the next page load rather than when a
 cache decides to expire.
 
+The page's own files are served `no-store` and the vendored bundle is served
+`immutable`. That split is deliberate: `app.js` and `style.css` change on every
+deploy and a browser holding an old copy is a deploy that did not happen, while
+`vendor/molstar.js` is pinned by version and checked against a hash, so re-sending
+five megabytes on every page load would protect against a change that cannot occur.
+
+One caveat about that, learned the slow way. `no-store` tells a browser not to keep
+the response it is being given; it cannot evict what is already kept. These files
+were served with no cache headers at all until then, so a browser that had loaded
+the page before the fix applied its own heuristic freshness and went on using the
+copy it had. The symptom is a deploy that is correct on the server, verifiable byte
+for byte over HTTP, and invisible in one browser while a browser that had never
+opened the page shows it immediately. One hard reload (Ctrl+Shift+R) clears it, once
+per browser, and never again.
+
 `sudo` on the design server needs a password, so this cannot be a systemd unit. It
 runs as a plain background process and **does not come back after a reboot**. To
 survive one, add a user crontab entry:

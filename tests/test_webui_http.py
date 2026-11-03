@@ -171,6 +171,26 @@ def test_the_ring_is_assembled_on_request_and_not_read_off_disk():
             assert c.get("/api/runs/c5/assembly", params=bad).status_code in (403, 404)
 
 
+def test_the_page_is_never_served_from_a_stale_cache():
+    """A deploy that the browser does not see is a deploy that did not happen.
+
+    The API routes said no-store from the start and these said nothing, so the
+    browser applied its own heuristic: a CSS fix and a JavaScript feature were
+    copied to the server, verified byte for byte over HTTP, and still did not
+    reach the page. The vendored bundle is the one exception, pinned by version
+    and hash, so it cannot change under a URL that stays the same.
+    """
+    if _unavailable():
+        return
+    with outputs() as root:
+        c = client_for(root)
+        for name in ("app.js", "style.css", "i18n.js", "index.html"):
+            r = c.get(f"/static/{name}")
+            if r.status_code != 200:
+                continue                       # not every file is in the checkout
+            assert r.headers["cache-control"] == "no-store", name
+
+
 def test_the_export_route_hands_over_a_named_file():
     """It exists to hand a sheet to whoever orders the synthesis.
 
